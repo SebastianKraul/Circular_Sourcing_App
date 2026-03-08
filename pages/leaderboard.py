@@ -218,8 +218,7 @@ fig3 = go.Figure(go.Bar(
     textposition="outside",
     textfont=dict(color="#c9d1d9", size=14),
 ))
-fig3.update_layout(**PLOT_LAYOUT, title="Grade Distribution", showlegend=False,
-                   margin=dict(l=40, r=20, t=50, b=40))
+fig3.update_layout(**PLOT_LAYOUT, title="Grade Distribution", showlegend=False)
 fig3.update_xaxes(**_AXIS, tickangle=0, title="Grade")
 fig3.update_yaxes(**_AXIS, title="# Students", dtick=1)
 st.plotly_chart(fig3, width="stretch")
