@@ -56,9 +56,8 @@ PLOT_LAYOUT = dict(
     font=dict(family="monospace", color="#c9d1d9", size=12),
     margin=dict(l=40, r=20, t=50, b=100),
     legend=dict(bgcolor="#161b22", bordercolor="#30363d", borderwidth=1),
-    xaxis=dict(gridcolor="#21262d", zerolinecolor="#30363d", tickangle=-35),
-    yaxis=dict(gridcolor="#21262d", zerolinecolor="#30363d"),
 )
+_AXIS = dict(gridcolor="#21262d", zerolinecolor="#30363d")
 
 
 def _get_supabase():
@@ -177,18 +176,9 @@ fig = go.Figure(go.Bar(
     textfont=dict(color="#c9d1d9", size=13, family="monospace"),
     hovertemplate="<b>%{x}</b><br>Score: %{y:.1f}<extra></extra>",
 ))
-fig.update_layout(
-    **PLOT_LAYOUT,
-    title=f"Scores — Session: {selected}",
-    yaxis=dict(gridcolor="#21262d", zerolinecolor="#30363d", range=[0, 105], title="Score"),
-    showlegend=False,
-)
-# Grade legend as annotation
-for grade, color in GRADE_COLOR.items():
-    fig.add_annotation(
-        x=1, y=1, xref="paper", yref="paper",
-        showarrow=False, visible=False,  # placeholder — legend handled by color
-    )
+fig.update_layout(**PLOT_LAYOUT, title=f"Scores — Session: {selected}", showlegend=False)
+fig.update_xaxes(**_AXIS, tickangle=-35)
+fig.update_yaxes(**_AXIS, range=[0, 105], title="Score")
 st.plotly_chart(fig, width="stretch")
 
 # ── Circular mix vs SAP scatter ────────────────────────────────────────────────
@@ -212,15 +202,9 @@ if len(df) >= 3:
             "SAP: $%{y:,.0f}<extra></extra>"
         ),
     ))
-    fig2.update_layout(
-        **PLOT_LAYOUT,
-        title="Does more circular sourcing lead to higher SAP?",
-        xaxis=dict(
-            gridcolor="#21262d", tickangle=0,
-            title="Circular Mix (%)", range=[-5, 105],
-        ),
-        yaxis=dict(gridcolor="#21262d", title="Cumulative SAP ($)"),
-    )
+    fig2.update_layout(**PLOT_LAYOUT, title="Does more circular sourcing lead to higher SAP?")
+    fig2.update_xaxes(**_AXIS, tickangle=0, title="Circular Mix (%)", range=[-5, 105])
+    fig2.update_yaxes(**_AXIS, title="Cumulative SAP ($)")
     st.plotly_chart(fig2, width="stretch")
 
 # ── Grade distribution ─────────────────────────────────────────────────────────
@@ -234,12 +218,8 @@ fig3 = go.Figure(go.Bar(
     textposition="outside",
     textfont=dict(color="#c9d1d9", size=14),
 ))
-fig3.update_layout(
-    **PLOT_LAYOUT,
-    title="Grade Distribution",
-    xaxis=dict(gridcolor="#21262d", tickangle=0, title="Grade"),
-    yaxis=dict(gridcolor="#21262d", title="# Students", dtick=1),
-    showlegend=False,
-    margin=dict(l=40, r=20, t=50, b=40),
-)
+fig3.update_layout(**PLOT_LAYOUT, title="Grade Distribution", showlegend=False,
+                   margin=dict(l=40, r=20, t=50, b=40))
+fig3.update_xaxes(**_AXIS, tickangle=0, title="Grade")
+fig3.update_yaxes(**_AXIS, title="# Students", dtick=1)
 st.plotly_chart(fig3, width="stretch")
