@@ -363,7 +363,7 @@ def run_monte_carlo(s, S, mix_pct, n_runs=1000):
     return saps, stockouts
 
 
-def find_optimal_policy(mix_pct, n_runs_per_combo=150):
+def find_optimal_policy(mix_pct, n_runs_per_combo=500):
     """
     Grid search over (s, S) to maximise expected SAP for the given mix_pct.
     Returns (best_s, best_S, best_mean_sap).
