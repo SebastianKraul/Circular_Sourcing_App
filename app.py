@@ -241,6 +241,7 @@ def _init():
         st.session_state["onboarding_complete"] = False
         st.session_state["game_mode"] = "free_play"
         st.session_state["shock_banner_shown"] = False
+        st.session_state["policy_changes"] = 0
 
 
 def _restart():
@@ -401,8 +402,10 @@ def _onboarding_company_brief():
               <span style="color:#8b949e; font-size:0.9rem;">~N(70%, 10²%) — order more than you need</span></li>
           <li style="margin-bottom:0.8rem;"><strong>A disruption will occur</strong><br>
               <span style="color:#8b949e; font-size:0.9rem;">Timing and nature: unknown</span></li>
-          <li><strong>Carbon pricing is active — and may change</strong><br>
+          <li style="margin-bottom:0.8rem;"><strong>Carbon pricing is active — and may change</strong><br>
               <span style="color:#8b949e; font-size:0.9rem;">Currently $2/kg CO₂e</span></li>
+          <li><strong>Policy changes are not immediate</strong><br>
+              <span style="color:#8b949e; font-size:0.9rem;">Adjustments to s and S take effect the <em>following</em> quarter — design your policy upfront, not reactively</span></li>
         </ul>
         <hr style="border-color:#30363d; margin:0 0 1rem 0;">
         <h4 style="color:#c9d1d9; margin:0 0 0.4rem 0;">Objective</h4>
@@ -651,7 +654,11 @@ def _onboarding_setup():
         <strong style="color:#d29922;">S</strong> = Order-Up-To Level.
         You order (S − inventory) units, split by your sourcing mix.<br><br>
         <strong>Think carefully:</strong> Demand averages 100 units/round.
-        Starting inventory is 150. How low is too low? How high is too high?
+        Starting inventory is 150. How low is too low? How high is too high?<br><br>
+        <strong style="color:#f85149;">Note:</strong> Your initial settings apply immediately.
+        Any changes made <em>during</em> the simulation take effect from the
+        <em>following</em> quarter — not the current one. The number of policy
+        changes you make is tracked and shown on the leaderboard.
         </p>
         """, border_color="#d29922")
 
@@ -746,6 +753,7 @@ with st.sidebar:
     mode_label = {"free_play": "Free Play", "primary_lock": "Primary Lock",
                   "circular_lock": "Circular Challenge"}.get(game_mode, game_mode)
     st.caption(f"Mode: {mode_label}")
+    st.caption(f"Policy changes: {st.session_state.get('policy_changes', 0)}")
     st.divider()
 
     st.markdown("### (s,S) Inventory Policy")
@@ -771,8 +779,13 @@ with st.sidebar:
         inputs_valid = False
     else:
         inputs_valid = True
-        st.session_state["s_reorder_point"] = s_val
-        st.session_state["S_order_up_to"] = S_val
+        _eff_s = st.session_state["s_reorder_point"]
+        _eff_S = st.session_state["S_order_up_to"]
+        if s_val != _eff_s or S_val != _eff_S:
+            st.caption(
+                f"Active this round: s={_eff_s}, S={_eff_S} — "
+                "changes apply from the next round."
+            )
 
     st.divider()
 
@@ -853,6 +866,14 @@ GAME_KEYS = {
 }
 
 if advance and inputs_valid and not st.session_state["game_over"]:
+    # Capture pending (s,S) from sidebar widgets before running the round
+    _pend_s = st.session_state.get("sidebar_s", st.session_state["s_reorder_point"])
+    _pend_S = st.session_state.get("sidebar_S", st.session_state["S_order_up_to"])
+
+    # Count policy change if sidebar values differ from currently effective values
+    if _pend_s != st.session_state["s_reorder_point"] or _pend_S != st.session_state["S_order_up_to"]:
+        st.session_state["policy_changes"] = st.session_state.get("policy_changes", 0) + 1
+
     if use_override:
         st.session_state["manual_primary_override"] = man_primary if man_primary > 0 else None
         st.session_state["manual_circular_override"] = man_circular if man_circular > 0 else None
@@ -860,10 +881,15 @@ if advance and inputs_valid and not st.session_state["game_over"]:
         st.session_state["manual_primary_override"] = None
         st.session_state["manual_circular_override"] = None
 
+    # Run round with currently effective (s,S) — pending values apply after
     game_state = {k: st.session_state[k] for k in GAME_KEYS if k in st.session_state}
     new_state = run_round(game_state)
     for k, v in new_state.items():
         st.session_state[k] = v
+
+    # Now promote pending (s,S) to effective — takes effect next round
+    st.session_state["s_reorder_point"] = _pend_s
+    st.session_state["S_order_up_to"] = _pend_S
 
     if st.session_state["current_round"] > SHOCK_ROUND and not st.session_state.get("shock_banner_shown"):
         st.session_state["shock_banner_shown"] = True
@@ -961,6 +987,8 @@ if st.session_state["game_over"]:
                 <td style="color:#{'f85149' if stockout_rounds > 0 else '3fb950'}; text-align:right;">{stockout_rounds} / {TOTAL_ROUNDS}</td></tr>
             <tr><td style="color:#8b949e; padding:4px 0;">Total Carbon</td>
                 <td style="color:#c9d1d9; text-align:right;">{total_carbon:,.0f} kg CO₂e</td></tr>
+            <tr><td style="color:#8b949e; padding:4px 0;">Policy Changes</td>
+                <td style="color:#{'d29922' if st.session_state.get('policy_changes', 0) > 0 else '3fb950'}; text-align:right;">{st.session_state.get('policy_changes', 0)}</td></tr>
           </table>
           <hr style="border-color:#30363d; margin:0.8rem 0;">
           <p style="color:#8b949e; font-size:0.82rem; margin:0;">
@@ -1205,6 +1233,8 @@ if st.session_state["game_over"]:
                   <td style="color:#c9d1d9; text-align:right;">{stockout_rounds}</td></tr>
               <tr><td style="color:#8b949e; padding:3px 0;">Cumulative SAP</td>
                   <td style="color:#c9d1d9; text-align:right;">${cumulative_sap:,.0f}</td></tr>
+              <tr><td style="color:#8b949e; padding:3px 0;">Policy Changes</td>
+                  <td style="color:#c9d1d9; text-align:right;">{st.session_state.get('policy_changes', 0)}</td></tr>
             </table>
             """, border_color="#58a6ff")
         submit_disabled = not session_code.strip() or not nickname.strip()
@@ -1219,6 +1249,7 @@ if st.session_state["game_over"]:
                     "stockout_rounds": stockout_rounds,
                     "cumulative_sap": round(cumulative_sap, 0),
                     "total_carbon": round(total_carbon, 0),
+                    "policy_changes": st.session_state.get("policy_changes", 0),
                     "game_mode": st.session_state.get("game_mode", "free_play"),
                 }).execute()
                 st.session_state["score_submitted"] = True

@@ -133,27 +133,33 @@ df.insert(0, "rank", range(1, len(df) + 1))
 
 # ── Summary metrics ────────────────────────────────────────────────────────────
 st.divider()
-m1, m2, m3, m4, m5 = st.columns(5)
+m1, m2, m3, m4, m5, m6 = st.columns(6)
 m1.metric("Players", len(df))
 m2.metric("Top Score", f"{df['score'].max():.1f}")
 m3.metric("Avg Score", f"{df['score'].mean():.1f}")
 m4.metric("Avg Circular Mix", f"{df['circular_mix'].mean():.1f}%")
 stockout_free = int((df["stockout_rounds"] == 0).sum())
 m5.metric("Stockout-Free", f"{stockout_free} / {len(df)}")
+if "policy_changes" in df.columns and df["policy_changes"].notna().any():
+    m6.metric("Avg Policy Changes", f"{df['policy_changes'].mean():.1f}")
+else:
+    m6.metric("Avg Policy Changes", "—")
 
 st.divider()
 
 # ── Leaderboard table ──────────────────────────────────────────────────────────
 st.markdown("### Rankings")
 
-display_df = df[[
-    "rank", "nickname", "grade", "score",
-    "circular_mix", "stockout_rounds", "cumulative_sap", "game_mode",
-]].copy()
-display_df.columns = [
-    "#", "Nickname", "Grade", "Score (0-100)",
-    "Circular Mix %", "Stockout Rounds", "Cumulative SAP ($)", "Mode",
-]
+_table_cols = ["rank", "nickname", "grade", "score",
+               "circular_mix", "stockout_rounds", "cumulative_sap", "game_mode"]
+_col_names   = ["#", "Nickname", "Grade", "Score (0-100)",
+                "Circular Mix %", "Stockout Rounds", "Cumulative SAP ($)", "Mode"]
+if "policy_changes" in df.columns:
+    _table_cols.append("policy_changes")
+    _col_names.append("Policy Changes")
+
+display_df = df[_table_cols].copy()
+display_df.columns = _col_names
 display_df["Cumulative SAP ($)"] = display_df["Cumulative SAP ($)"].map(
     lambda x: f"${float(x):,.0f}"
 )
