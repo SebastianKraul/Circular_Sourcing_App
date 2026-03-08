@@ -20,6 +20,7 @@ from simulation import (
     find_optimal_policy,
     compute_switching_point,
     compute_sustainability_rating,
+    SCENARIOS,
     TOTAL_ROUNDS,
     SHOCK_ROUND,
     CARBON_PRICE_NORMAL,
@@ -54,13 +55,13 @@ def _get_supabase():
 # Defined at module level so @st.cache_data persists across reruns.
 
 @st.cache_data(show_spinner=False)
-def _cached_monte_carlo(s, S, mix_pct, n_runs):
-    return run_monte_carlo(s, S, mix_pct, n_runs)
+def _cached_monte_carlo(s, S, mix_pct, n_runs, scenario):
+    return run_monte_carlo(s, S, mix_pct, n_runs, scenario=scenario)
 
 
 @st.cache_data(show_spinner=False)
-def _cached_find_optimal(mix_pct):
-    return find_optimal_policy(mix_pct)
+def _cached_find_optimal(mix_pct, scenario):
+    return find_optimal_policy(mix_pct, scenario=scenario)
 
 
 # ── Page config ────────────────────────────────────────────────────────────────
@@ -104,130 +105,857 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# ── Round narratives ───────────────────────────────────────────────────────────
-ROUND_NARRATIVES = {
-    1: {
-        "title": "Q1 — First Orders",
-        "body": (
-            "Your procurement dashboard is live. Inner Mongolia Mining Co. reports full operational "
-            "capacity. EcoReclaim Urban Mining has confirmed your account. The board expects a "
-            "sustainability strategy within the year. Carbon is priced at **$2/kg CO₂e**."
-        ),
-        "tip": (
-            "Demand averages ~100 units/round (σ=20). You start with 150 units. "
-            "Set your reorder point (s) and order-up-to (S) to avoid running dry."
-        ),
+# ── Scenario narratives ────────────────────────────────────────────────────────
+# SCENARIO_NARRATIVES[scenario_key][round_num] = {title, body, tip}
+# Round 3 body may contain {yield_pct}, {yield_comment}, {received} placeholders.
+
+SCENARIO_NARRATIVES = {
+
+    # ── Base Game ──────────────────────────────────────────────────────────────
+    "base_game": {
+        1: {
+            "title": "Q1 — First Orders",
+            "body": (
+                "Your procurement dashboard is live. Inner Mongolia Mining Co. reports full "
+                "operational capacity. EcoReclaim Urban Mining has confirmed your account. "
+                "The board expects a sustainability strategy within the year. "
+                "Carbon is priced at **$2/kg CO₂e**."
+            ),
+            "tip": (
+                "Demand averages ~100 units/round (σ=20). You start with 150 units. "
+                "Set your reorder point (s) and order-up-to (S) to avoid running dry."
+            ),
+        },
+        2: {
+            "title": "Q2 — ESG Reporting Season",
+            "body": (
+                "Institutional investors flagged NovaPulse's carbon footprint in their annual "
+                "review. The CFO requests a cost-carbon breakdown for the board pack. Primary "
+                "sourcing looks cheap on the invoice — but factor in the carbon tax."
+            ),
+            "tip": (
+                "True unit cost at $2/kg CO₂e: **Primary = $5 + 8×$2 = $21**. "
+                "**Circular = $12 + 0.5×$2 = $13**. Circular is already cheaper on total-cost basis."
+            ),
+        },
+        3: {
+            "title": "Q3 — Yield Variation",
+            "body": (
+                "EcoReclaim's batch yield came in at **{yield_pct:.0%}** this quarter — "
+                "{yield_comment}. Urban mining yield follows N(70%, σ=10%). If you ordered "
+                "100 units from circular, you received ~{received:.0f}. "
+                "Yield risk is real — build it into your order quantity."
+            ),
+            "tip": (
+                "Buffer rule: order ~43% more circular units than needed. "
+                "To receive 70 units reliably, order ~100 from EcoReclaim."
+            ),
+        },
+        4: {
+            "title": "Q4 — Storm Warning",
+            "body": (
+                "Intelligence reports signal growing labour unrest at the Inner Mongolia primary "
+                "mine. A trade analyst briefing warns: *'Any disruption would double lead times "
+                "and stress supply chains globally.'* Check your pipeline. Are your buffers adequate?"
+            ),
+            "tip": (
+                "If a disruption hits **next quarter**, primary orders placed NOW arrive in "
+                "Round 5. Under-prepared firms will face stockouts at $20/unit penalty."
+            ),
+        },
+        5: {
+            "title": "Q5 — SUPPLY SHOCK",
+            "body": (
+                "A wildcat strike has shut the primary mine indefinitely. Primary lead time "
+                "doubles to **2 rounds**. The Carbon Pricing Act takes effect: **$8/kg CO₂e**. "
+                "Competitors over-reliant on primary sourcing are scrambling. "
+                "EcoReclaim is at full capacity."
+            ),
+            "tip": (
+                "Recalculate: **Primary = $5 + 8×$8 = $69/unit**. "
+                "**Circular = $12 + 0.5×$8 = $16/unit**. "
+                "P* = $0.93/kg CO₂e — the shock price of $8 is 8.6× above the switching point."
+            ),
+        },
+        6: {
+            "title": "Q6 — Adapting to the New Normal",
+            "body": (
+                "The strike continues with no resolution in sight. Circular capacity is "
+                "tightening globally as firms pivot away from primary. EcoReclaim is "
+                "prioritising established partners. Primary orders placed now arrive in **Round 8**."
+            ),
+            "tip": (
+                "With 2-round primary lead time, you must plan two rounds ahead. "
+                "Circular still arrives in 1 round. Consider raising your (s,S) targets."
+            ),
+        },
+        7: {
+            "title": "Q7 — Regulatory Tailwinds",
+            "body": (
+                "The EU Carbon Border Adjustment Mechanism passes into law, targeting "
+                "carbon-intensive imports. Analysts expect $8+/kg CO₂e to persist for years. "
+                "Circular sourcing is no longer just ethical — it is the economically rational choice."
+            ),
+            "tip": (
+                "Your cumulative carbon tab is visible in the chart below. "
+                "Compare your trajectory against a hypothetical 100% circular scenario."
+            ),
+        },
+        8: {
+            "title": "Q8 — Partial Recovery",
+            "body": (
+                "Mediators report progress at the mine. A partial workforce returned, but full "
+                "capacity is months away. EcoReclaim reports strong yield conditions. "
+                "**Two rounds remain** — your final pipeline decisions are critical."
+            ),
+            "tip": (
+                "Primary orders placed in Round 8 (lead time 2) arrive Round 10. "
+                "Circular orders arrive Round 9. Map out your final two rounds now."
+            ),
+        },
+        9: {
+            "title": "Q9 — Endgame",
+            "body": (
+                "Primary supply is recovering but carbon pricing stays at **$8/kg CO₂e**. "
+                "Your sustainability grade is crystallising. The board will review SAP, "
+                "circular mix percentage, and stockout record at the end of Q10."
+            ),
+            "tip": (
+                "Circular orders placed now arrive Round 10. Primary (lead time 2) arrives "
+                "Round 11 — after the simulation ends. Circular is your only in-time option."
+            ),
+        },
+        10: {
+            "title": "Q10 — Final Quarter",
+            "body": (
+                "The board meeting is confirmed. Shareholders, ESG auditors, and the press are "
+                "watching. Any inventory ordered this round arrives **after the simulation ends** "
+                "and will not count toward your score."
+            ),
+            "tip": (
+                "Avoid over-ordering — holding costs apply to end-of-round inventory. "
+                "Your score is now largely determined. Make your final decisions count."
+            ),
+        },
     },
-    2: {
-        "title": "Q2 — ESG Reporting Season",
-        "body": (
-            "Institutional investors flagged NovaPulse's carbon footprint in their annual review. "
-            "The CFO requests a cost-carbon breakdown for the board pack. Primary sourcing looks "
-            "cheap on the invoice — but factor in the carbon tax."
-        ),
-        "tip": (
-            "True unit cost at $2/kg CO₂e: **Primary = $5 + 8×$2 = $21**. "
-            "**Circular = $12 + 0.5×$2 = $13**. Circular is already cheaper on a total-cost basis."
-        ),
+
+    # ── Demand Surge ───────────────────────────────────────────────────────────
+    "demand_surge": {
+        1: {
+            "title": "Q1 — Steady State",
+            "body": (
+                "Operations are running smoothly. Both suppliers are fully available. "
+                "Carbon stays at **$2/kg CO₂e** throughout this scenario — no regulatory shock. "
+                "Demand is averaging 100 units/round and the outlook appears stable."
+            ),
+            "tip": (
+                "With no supply disruption, the focus is on demand management. "
+                "Calibrate your (s,S) policy for normal demand before conditions change."
+            ),
+        },
+        2: {
+            "title": "Q2 — Early Signals",
+            "body": (
+                "The NovaPulse EX-7 is generating positive buzz in early reviews. "
+                "Retail sell-through is slightly above forecast. Channel inventory across "
+                "distributors is thinning. Nothing alarming — but worth watching."
+            ),
+            "tip": (
+                "Demand has nudged up slightly. If the trend continues, your current "
+                "(s,S) policy may not provide adequate buffer. "
+                "Consider whether S is set high enough."
+            ),
+        },
+        3: {
+            "title": "Q3 — Growing Momentum",
+            "body": (
+                "Two tech influencers with combined reach of 40 million subscribers "
+                "featured the EX-7. Retailer reorder rates are up 20%. "
+                "The sales team is upgrading forecasts. Demand is averaging ~105 units."
+            ),
+            "tip": (
+                "Demand is creeping up. Yield uncertainty on circular orders remains. "
+                "If you're planning to build inventory buffer, act now — "
+                "orders take at least 1 round to arrive."
+            ),
+        },
+        4: {
+            "title": "Q4 — Analyst Alert",
+            "body": (
+                "A viral unboxing video crossed 10 million views overnight. "
+                "Three major retailers have placed emergency pre-orders. "
+                "An industry analyst report warns: *'EX-7 demand could double by Q5 "
+                "if social momentum holds.'* Your pipeline — is it ready?"
+            ),
+            "tip": (
+                "Average demand next round may reach **~185 units** — nearly double normal. "
+                "Orders placed this round arrive in Round 5 (lead time 1). "
+                "This is your last chance to pre-position inventory."
+            ),
+        },
+        5: {
+            "title": "Q5 — DEMAND SURGE",
+            "body": (
+                "The EX-7 has gone viral. Demand has roughly doubled to **~185 units/round** "
+                "and volatility has spiked (σ=40). Both suppliers remain fully available — "
+                "this is a pure demand-side event. "
+                "Stockout penalties are now your primary threat."
+            ),
+            "tip": (
+                "At demand ~185 and inventory below S, your (s,S) order will be "
+                "(S − inventory) — split by your sourcing mix. "
+                "If S is too low, you will chronically under-order and face repeated stockouts."
+            ),
+        },
+        6: {
+            "title": "Q6 — Sustaining the Peak",
+            "body": (
+                "Demand remains elevated at ~185 units. The supply chain team is working "
+                "overtime. EcoReclaim has confirmed they can accommodate increased circular "
+                "order volumes. Your (s,S) policy was designed for 100-unit demand — "
+                "does it still hold?"
+            ),
+            "tip": (
+                "Consider raising S to match the new demand regime. "
+                "Remember: (s,S) changes take effect from the *next* round. "
+                "Each round of under-ordering compounds your stockout exposure."
+            ),
+        },
+        7: {
+            "title": "Q7 — Demand Plateau",
+            "body": (
+                "Social buzz has stabilised. Demand is still ~180 units — well above "
+                "the original baseline. The CFO is asking for a revised inventory strategy "
+                "that accounts for the new demand level. Carbon costs remain low at $2/kg CO₂e."
+            ),
+            "tip": (
+                "You're operating in a higher-demand regime now. "
+                "The optimal (s,S) for demand ~180 is materially different from "
+                "what was optimal for demand ~100. Has your policy kept pace?"
+            ),
+        },
+        8: {
+            "title": "Q8 — Early Signs of Cooling",
+            "body": (
+                "A competing product has launched, drawing some attention away from the EX-7. "
+                "Demand is ~175 units — still elevated but trending down slightly. "
+                "Retailer pre-orders are moderating. **Two rounds remain.**"
+            ),
+            "tip": (
+                "If demand is declining, over-ordering now creates excess inventory "
+                "you'll carry into Q10 with holding costs. "
+                "Balance service level against end-of-game inventory position."
+            ),
+        },
+        9: {
+            "title": "Q9 — Gradual Normalisation",
+            "body": (
+                "The competitor has gained market share. Demand is pulling back toward "
+                "~170 units. Your sustainability grade is crystallising — review your "
+                "circular mix and stockout record before the final quarter."
+            ),
+            "tip": (
+                "Circular orders placed now arrive Round 10. "
+                "Avoid over-ordering — end-of-game inventory earns no revenue "
+                "but still incurs holding costs."
+            ),
+        },
+        10: {
+            "title": "Q10 — Final Quarter",
+            "body": (
+                "The board meeting is set. The EX-7 story — from baseline to viral surge "
+                "to gradual normalisation — is complete. Any inventory ordered this round "
+                "arrives **after the simulation ends** and will not count toward your score."
+            ),
+            "tip": (
+                "Focus on demand ~165 from your current pipeline. "
+                "Holding costs apply to end-of-round inventory. Make your final decisions count."
+            ),
+        },
     },
-    3: {
-        "title": "Q3 — Yield Variation",
-        "body": (
-            "EcoReclaim's batch yield came in at **{yield_pct:.0%}** this quarter — {yield_comment}. "
-            "Urban mining yield follows N(70%, σ=10%). If you ordered 100 units from circular, "
-            "you received ~{received:.0f}. "
-            "Yield risk is real — build it into your order quantity."
-        ),
-        "tip": (
-            "Buffer rule: order ~43% more circular units than needed. "
-            "To receive 70 units reliably, order ~100 from EcoReclaim."
-        ),
+
+    # ── Carbon Ratchet ─────────────────────────────────────────────────────────
+    "carbon_ratchet": {
+        1: {
+            "title": "Q1 — Regulatory Calendar Published",
+            "body": (
+                "The government has published a binding carbon pricing schedule. "
+                "The trajectory is fixed and public: **$2 → $4 → $6 → $8 → $10/kg CO₂e**, "
+                "stepping up every two rounds. Current price: **$2/kg CO₂e**. "
+                "No supply disruptions are expected in this scenario."
+            ),
+            "tip": (
+                "At $2/kg: Primary total cost = $21/unit, Circular = $13/unit. "
+                "The gap widens with every price step. "
+                "Proactive sourcing mix shifts now avoid painful carbon bills later."
+            ),
+        },
+        2: {
+            "title": "Q2 — Final Quarter at $2",
+            "body": (
+                "Operations are stable. The carbon price steps up to $4/kg CO₂e **next round**. "
+                "This is your last quarter at the lowest carbon rate. "
+                "Primary lead time remains 1 round throughout this scenario."
+            ),
+            "tip": (
+                "Next round: Primary total cost = $5 + 8×$4 = **$37/unit**. "
+                "Circular = $12 + 0.5×$4 = **$14/unit**. "
+                "The cost gap has already more than doubled. Is your sourcing mix ready?"
+            ),
+        },
+        3: {
+            "title": "Q3 — Carbon Steps to $4",
+            "body": (
+                "As scheduled, the carbon price has increased to **$4/kg CO₂e**. "
+                "Your carbon cost this round is double what it was in Q1–Q2. "
+                "Firms that shifted to circular early are already ahead on total cost."
+            ),
+            "tip": (
+                "At $4/kg: Primary = $37/unit, Circular = $14/unit. "
+                "Carbon gap between suppliers: 7.5 kg × $4 = **$30/unit**. "
+                "Next step to $6/kg is in two rounds."
+            ),
+        },
+        4: {
+            "title": "Q4 — Holding at $4",
+            "body": (
+                "Carbon is stable at $4/kg this round before the next scheduled step. "
+                "ESG analysts are flagging NovaPulse's carbon trajectory in their reports. "
+                "Investors are asking questions about the sourcing strategy."
+            ),
+            "tip": (
+                "Next round: carbon steps to $6/kg. "
+                "Primary cost will be $5 + 8×$6 = **$53/unit**. "
+                "Circular = $12 + 0.5×$6 = **$15/unit**. "
+                "Waiting to switch is becoming increasingly expensive."
+            ),
+        },
+        5: {
+            "title": "Q5 — Carbon Steps to $6",
+            "body": (
+                "The third price step has taken effect: **$6/kg CO₂e**. "
+                "At this level, the carbon tax on a single primary unit ($48) now exceeds "
+                "the circular premium ($7) by a factor of nearly 7. "
+                "The economics of primary sourcing are deteriorating sharply."
+            ),
+            "tip": (
+                "Primary = $53/unit. Circular = $15/unit. "
+                "The switching point P* = $0.93/kg was crossed back in Q1 — "
+                "but at $6, primary is now **3.5× more expensive than circular per unit**."
+            ),
+        },
+        6: {
+            "title": "Q6 — Holding at $6",
+            "body": (
+                "Carbon holds at $6/kg. The regulatory trajectory has proven credible — "
+                "no policy reversals, no delays. Firms that deferred circular investment "
+                "are now facing a painful correction. "
+                "EcoReclaim reports strong yield conditions this quarter."
+            ),
+            "tip": (
+                "Next round: carbon steps to $8/kg — matching the Base Game shock price. "
+                "Primary will cost $5 + 8×$8 = **$69/unit**. "
+                "Circular = $12 + 0.5×$8 = **$16/unit**. "
+                "Are your (s,S) buffers sized for the new cost reality?"
+            ),
+        },
+        7: {
+            "title": "Q7 — Carbon Steps to $8",
+            "body": (
+                "The carbon price has reached **$8/kg CO₂e** — the same level as the "
+                "Base Game shock, but reached gradually over 6 rounds. "
+                "Firms with early circular commitments have built a compounding cost advantage."
+            ),
+            "tip": (
+                "Primary = $69/unit. Circular = $16/unit. "
+                "One more price step remains. "
+                "Circular orders placed now arrive next round (lead time 1)."
+            ),
+        },
+        8: {
+            "title": "Q8 — Holding at $8",
+            "body": (
+                "Carbon holds at $8/kg. The final step to $10/kg is **next round**. "
+                "**Two rounds remain.** Your end-of-game carbon footprint is being "
+                "watched closely by the ESG committee. "
+            ),
+            "tip": (
+                "Next round: Primary = $5 + 8×$10 = **$85/unit**. "
+                "Circular = $12 + 0.5×$10 = **$17/unit**. "
+                "At this point, the sourcing mix is the dominant driver of your final score."
+            ),
+        },
+        9: {
+            "title": "Q9 — Carbon Steps to $10",
+            "body": (
+                "The final step: **$10/kg CO₂e**. Primary sourcing now costs $85/unit — "
+                "17× more expensive than the original $5 sticker price once carbon is included. "
+                "This is the highest carbon rate in any scenario. One round remains."
+            ),
+            "tip": (
+                "Circular orders placed now arrive Round 10 (lead time 1). "
+                "Primary orders also arrive Round 10 (lead time 1 in this scenario). "
+                "Avoid over-ordering — end-of-game inventory earns no additional revenue."
+            ),
+        },
+        10: {
+            "title": "Q10 — Final Quarter at Peak Carbon",
+            "body": (
+                "The simulation concludes under maximum carbon pricing. "
+                "The board will assess whether NovaPulse's sourcing strategy kept pace "
+                "with the regulatory trajectory — or chased it reactively. "
+                "Any inventory ordered this round arrives **after the simulation ends**."
+            ),
+            "tip": (
+                "Holding costs apply to end-of-round inventory. "
+                "Your circular mix percentage over the full 10 rounds is a key score component. "
+                "Make your final decisions count."
+            ),
+        },
     },
-    4: {
-        "title": "Q4 — Storm Warning",
-        "body": (
-            "Intelligence reports signal growing labour unrest at the Inner Mongolia primary mine. "
-            "A trade analyst briefing warns: *'Any disruption would double lead times and stress "
-            "supply chains globally.'* Check your pipeline. Are your buffers adequate?"
-        ),
-        "tip": (
-            "If a disruption hits **next quarter**, primary orders placed NOW arrive in Round 5. "
-            "Under-prepared firms will face stockouts at $20/unit penalty."
-        ),
+
+    # ── Supplier Failure ───────────────────────────────────────────────────────
+    "supplier_failure": {
+        1: {
+            "title": "Q1 — Strong Partnerships",
+            "body": (
+                "Both suppliers are performing well. EcoReclaim Urban Mining has reported "
+                "record throughput at its EU facilities. Inner Mongolia Mining Co. is at "
+                "full capacity. Carbon is **$2/kg CO₂e**."
+            ),
+            "tip": (
+                "Both suppliers are available. Build your sourcing mix and (s,S) policy "
+                "with the assumption that this could change — "
+                "single-supplier dependency is a hidden risk."
+            ),
+        },
+        2: {
+            "title": "Q2 — Rumours in the Market",
+            "body": (
+                "Trade press is reporting that EcoReclaim's parent company missed a debt "
+                "covenant last quarter. Management has denied any liquidity concerns. "
+                "Your account manager at EcoReclaim assures you everything is fine."
+            ),
+            "tip": (
+                "Early warning signs in supply chain risk are often dismissed. "
+                "Consider what your sourcing strategy looks like if circular "
+                "becomes unavailable at short notice."
+            ),
+        },
+        3: {
+            "title": "Q3 — {yield_comment} Yield",
+            "body": (
+                "EcoReclaim's batch yield came in at **{yield_pct:.0%}** this quarter — "
+                "{yield_comment}. You received ~{received:.0f} units from your circular order. "
+                "The parent company has hired a restructuring advisor, "
+                "according to a leaked filing."
+            ),
+            "tip": (
+                "Yield risk is always present with circular sourcing — "
+                "order ~43% more than you need to receive reliably. "
+                "The financial situation at EcoReclaim bears watching."
+            ),
+        },
+        4: {
+            "title": "Q4 — Distress Signals",
+            "body": (
+                "EcoReclaim's account manager has not responded in two weeks. "
+                "A creditor filing has appeared in the public registry. "
+                "Industry contacts confirm the company is in emergency talks with lenders. "
+                "Inner Mongolia Mining Co. remains fully operational."
+            ),
+            "tip": (
+                "If EcoReclaim fails **next round**, circular sourcing will be permanently "
+                "unavailable. Circular orders placed this round arrive in Round 5 — "
+                "potentially your last. Primary orders also arrive in Round 5 (lead time 1)."
+            ),
+        },
+        5: {
+            "title": "Q5 — SUPPLIER FAILURE",
+            "body": (
+                "EcoReclaim Urban Mining has filed for insolvency. All facilities are "
+                "immediately suspended. **Circular sourcing is permanently unavailable** "
+                "from this round forward. Simultaneously, the Carbon Pricing Act takes "
+                "effect: **$8/kg CO₂e**. You are now entirely dependent on primary sourcing "
+                "at elevated carbon cost."
+            ),
+            "tip": (
+                "Primary total cost: $5 + 8×$8 = **$69/unit**. "
+                "There is no circular alternative. "
+                "Your only levers are (s,S) policy and managing holding vs. stockout costs."
+            ),
+        },
+        6: {
+            "title": "Q6 — Single-Source Reality",
+            "body": (
+                "Inner Mongolia Mining Co. is your only supplier. They are meeting demand "
+                "but your carbon footprint is accumulating rapidly at $8/kg CO₂e. "
+                "Competitors who retained circular capacity are posting lower carbon costs."
+            ),
+            "tip": (
+                "Primary lead time is still 1 round in this scenario. "
+                "Focus on (s,S) optimisation — it's the only policy lever you have left. "
+                "Stockouts at $20/unit penalty are your main financial risk."
+            ),
+        },
+        7: {
+            "title": "Q7 — Carbon Accumulation",
+            "body": (
+                "Three rounds on primary sourcing at $8/kg CO₂e. "
+                "Your carbon cost per unit is $69 — well above any competitor "
+                "that maintained circular access. The ESG scorecard is looking unfavourable."
+            ),
+            "tip": (
+                "Reflect on the counterfactual: if you had maintained 50% circular "
+                "in rounds 1–4, how much carbon exposure would you have avoided? "
+                "This is the cost of concentration risk."
+            ),
+        },
+        8: {
+            "title": "Q8 — Searching for Alternatives",
+            "body": (
+                "The procurement team is exploring secondary urban mining contacts in Asia "
+                "but nothing is contractually available within the simulation window. "
+                "**Two rounds remain.** Carbon cost stays at $8/kg CO₂e."
+            ),
+            "tip": (
+                "Primary orders placed this round arrive Round 9 (lead time 1). "
+                "Manage your buffer to avoid stockouts in the final two rounds "
+                "without excessive end-of-game inventory."
+            ),
+        },
+        9: {
+            "title": "Q9 — Endgame on Primary",
+            "body": (
+                "One round remains. You have operated on primary-only sourcing since "
+                "Round 5. The board's ESG committee has flagged NovaPulse's carbon "
+                "trajectory as a material risk in the annual report."
+            ),
+            "tip": (
+                "Primary orders placed now arrive Round 10. "
+                "Avoid over-ordering — end-of-game inventory has no value "
+                "but still incurs holding costs."
+            ),
+        },
+        10: {
+            "title": "Q10 — Final Quarter",
+            "body": (
+                "The board meeting is confirmed. The story of concentration risk — "
+                "from promising partnership to permanent loss — will be central to the debrief. "
+                "Any inventory ordered this round arrives **after the simulation ends**."
+            ),
+            "tip": (
+                "Your circular mix percentage over 10 rounds is a key score component — "
+                "it reflects the full game, including the rounds before failure. "
+                "Make your final decisions count."
+            ),
+        },
     },
-    5: {
-        "title": "Q5 — SUPPLY SHOCK",
-        "body": (
-            "A wildcat strike has shut the primary mine indefinitely. Primary lead time doubles "
-            "to **2 rounds**. The Carbon Pricing Act takes effect: **$8/kg CO₂e**. Competitors "
-            "over-reliant on primary sourcing are scrambling. EcoReclaim is at full capacity."
-        ),
-        "tip": (
-            "Recalculate: **Primary = $5 + 8×$8 = $69/unit**. "
-            "**Circular = $12 + 0.5×$8 = $16/unit**. "
-            "P* = $0.93/kg CO₂e — the shock price of $8 is 8.6× above the switching point."
-        ),
+
+    # ── Known Shock ────────────────────────────────────────────────────────────
+    "known_shock": {
+        1: {
+            "title": "Q1 — Strike Confirmed for Q5",
+            "body": (
+                "Intelligence is unambiguous: labour action at the Inner Mongolia primary mine "
+                "is confirmed to begin in **Round 5**. Lead time will double to 2 rounds. "
+                "The Carbon Pricing Act will simultaneously raise the rate to **$8/kg CO₂e**. "
+                "You have four rounds to prepare. Carbon is currently **$2/kg CO₂e**."
+            ),
+            "tip": (
+                "This is a planning problem with perfect information. "
+                "Primary orders placed in Rounds 3–4 arrive in Rounds 4–5 (lead time 1 now). "
+                "After Round 5, primary orders take 2 rounds. "
+                "Design your inventory pipeline for the transition."
+            ),
+        },
+        2: {
+            "title": "Q2 — Preparation Window: 3 Rounds",
+            "body": (
+                "The strike timeline holds. Union negotiators report no progress. "
+                "EcoReclaim has confirmed they can scale up order volumes if needed. "
+                "Three rounds remain before conditions change permanently."
+            ),
+            "tip": (
+                "Consider what inventory level you want entering Round 5. "
+                "At demand ~100/round and lead time doubling to 2 rounds, "
+                "your safety stock calculation changes materially."
+            ),
+        },
+        3: {
+            "title": "Q3 — {yield_comment} Circular Yield",
+            "body": (
+                "EcoReclaim's yield came in at **{yield_pct:.0%}** — {yield_comment}. "
+                "You received ~{received:.0f} units from circular. "
+                "The strike timeline is unchanged: Round 5. Two preparation rounds remain."
+            ),
+            "tip": (
+                "Circular yield variability matters even when you're planning ahead. "
+                "If you intend to build buffer via circular orders, "
+                "order ~43% more than you need to receive reliably."
+            ),
+        },
+        4: {
+            "title": "Q4 — Final Preparation Round",
+            "body": (
+                "One round before the strike. Primary orders placed **this round** "
+                "arrive in Round 5 with normal lead time (1 round). "
+                "From Round 5 onward, primary lead time doubles to 2 rounds. "
+                "This is your last chance to place fast primary orders."
+            ),
+            "tip": (
+                "Primary orders placed in Round 5 arrive Round 7 (lead time 2). "
+                "Circular orders placed in Round 5 arrive Round 6 (lead time 1). "
+                "What does your inventory pipeline look like entering Round 5?"
+            ),
+        },
+        5: {
+            "title": "Q5 — SUPPLY SHOCK (as forecast)",
+            "body": (
+                "The wildcat strike has begun as predicted. Primary lead time has doubled "
+                "to **2 rounds**. The Carbon Pricing Act is in effect: **$8/kg CO₂e**. "
+                "The question now: did your preparation match the theory?"
+            ),
+            "tip": (
+                "Recalculate: **Primary = $5 + 8×$8 = $69/unit**. "
+                "**Circular = $12 + 0.5×$8 = $16/unit**. "
+                "Firms that pre-positioned inventory and shifted mix will feel this differently "
+                "from those in the Base Game who were surprised."
+            ),
+        },
+        6: {
+            "title": "Q6 — Executing the Plan",
+            "body": (
+                "The disruption is unfolding exactly as forecast. Primary lead time is 2 rounds. "
+                "Carbon is $8/kg CO₂e. Your pipeline position now reflects the quality "
+                "of preparation made in Rounds 1–4."
+            ),
+            "tip": (
+                "Primary orders placed in Round 6 arrive Round 8. "
+                "Circular orders arrive Round 7. "
+                "Adjust (s,S) if your buffers are not sized for the new regime."
+            ),
+        },
+        7: {
+            "title": "Q7 — Regulatory Tailwinds",
+            "body": (
+                "The EU Carbon Border Adjustment Mechanism passes into law. "
+                "Analysts confirm $8+/kg CO₂e will persist. "
+                "Firms without pre-existing circular relationships are now scrambling "
+                "to build them under capacity constraints."
+            ),
+            "tip": (
+                "Your circular mix and carbon footprint trajectory are visible in the charts. "
+                "How does your post-shock performance compare to your pre-shock planning?"
+            ),
+        },
+        8: {
+            "title": "Q8 — Partial Mine Recovery",
+            "body": (
+                "Mediators report progress. A partial workforce returned to the mine, "
+                "but full capacity is months away. Primary lead time remains 2 rounds. "
+                "**Two rounds remain** — your final pipeline decisions are critical."
+            ),
+            "tip": (
+                "Primary orders placed in Round 8 arrive Round 10. "
+                "Circular orders arrive Round 9. "
+                "End-of-game inventory earns no revenue — size your final orders carefully."
+            ),
+        },
+        9: {
+            "title": "Q9 — Endgame",
+            "body": (
+                "Carbon pricing holds at $8/kg CO₂e. Your sustainability grade is "
+                "crystallising. The board will compare your result against the Base Game "
+                "cohort — who faced the same shock without advance notice."
+            ),
+            "tip": (
+                "Circular orders placed now arrive Round 10 (lead time 1). "
+                "Primary orders (lead time 2) arrive Round 11 — after the simulation ends. "
+                "Circular is your only in-time option."
+            ),
+        },
+        10: {
+            "title": "Q10 — Final Quarter",
+            "body": (
+                "The board meeting is confirmed. You had perfect foresight of the disruption "
+                "— the debrief will examine whether foreknowledge translated into better "
+                "preparation and outcomes vs. the Base Game scenario."
+            ),
+            "tip": (
+                "Any inventory ordered this round arrives after the simulation ends. "
+                "Holding costs apply to end-of-round inventory. Make your final decisions count."
+            ),
+        },
     },
-    6: {
-        "title": "Q6 — Adapting to the New Normal",
-        "body": (
-            "The strike continues with no resolution in sight. Circular capacity globally is "
-            "tightening as firms pivot away from primary. EcoReclaim is prioritising partners "
-            "with established relationships. Primary orders placed now arrive in **Round 8**."
-        ),
-        "tip": (
-            "With 2-round primary lead time, you must plan two rounds ahead. "
-            "Circular still arrives in 1 round. Consider raising your (s,S) targets."
-        ),
+
+    # ── Seasonal ───────────────────────────────────────────────────────────────
+    "seasonal": {
+        1: {
+            "title": "Q1 — Off Season",
+            "body": (
+                "It is the start of the fiscal year. Consumer electronics demand is at its "
+                "seasonal low — averaging **~65 units/round** this quarter. "
+                "Carbon stays at **$2/kg CO₂e** throughout this scenario. "
+                "The peak season runs Q5–Q6 when demand reaches ~160 units."
+            ),
+            "tip": (
+                "Off-season demand is well below your starting inventory of 150 units. "
+                "Use these quiet rounds to build buffer stock ahead of the peak — "
+                "but don't over-invest in holding costs if you build too early."
+            ),
+        },
+        2: {
+            "title": "Q2 — Pre-Season Build",
+            "body": (
+                "Demand is rising to **~80 units/round** as distributors begin restocking "
+                "ahead of the peak season. This is the ideal window to increase inventory "
+                "levels proactively. Lead times remain 1 round for both suppliers."
+            ),
+            "tip": (
+                "Orders placed this round arrive Round 3. Orders placed in Round 3 "
+                "arrive Round 4. You have two more rounds before demand reaches ~130 units. "
+                "Size your order-up-to (S) for the peak, not the current demand."
+            ),
+        },
+        3: {
+            "title": "Q3 — Season Building",
+            "body": (
+                "Demand has reached **~100 units/round** — the long-run average, "
+                "but still well below the upcoming peak. Retailer orders are accelerating. "
+                "EcoReclaim's yield came in at **{yield_pct:.0%}** this quarter — "
+                "{yield_comment}. You received ~{received:.0f} units from circular."
+            ),
+            "tip": (
+                "Peak demand (Rounds 5–6) averages ~160 units. "
+                "Orders placed NOW arrive Round 4. "
+                "If your inventory entering Round 5 is below ~200 units, "
+                "stockouts are likely."
+            ),
+        },
+        4: {
+            "title": "Q4 — Final Build Round",
+            "body": (
+                "Demand is ramping to **~130 units/round**. Holiday season purchasing "
+                "begins next quarter. Orders placed this round arrive in Round 5 — "
+                "the start of peak. This is your final opportunity to build buffer "
+                "before demand surges."
+            ),
+            "tip": (
+                "Round 5 demand averages ~160 units (σ=30). "
+                "Inventory entering Round 5 should be at least 160–200 units to safely "
+                "cover demand plus uncertainty. What does your pipeline look like?"
+            ),
+        },
+        5: {
+            "title": "Q5 — PEAK SEASON",
+            "body": (
+                "Holiday season demand has arrived: **~160 units/round** with elevated "
+                "volatility (σ=30). Both suppliers are fully available and lead times "
+                "remain 1 round. This is the most critical quarter — stockouts now "
+                "cost $20/unit in penalty plus lost revenue of $50/unit."
+            ),
+            "tip": (
+                "Peak demand continues into Round 6. "
+                "Circular orders placed now arrive Round 6. "
+                "Ensure your pipeline covers both peak rounds before ordering less."
+            ),
+        },
+        6: {
+            "title": "Q6 — Peak Continues",
+            "body": (
+                "Demand holds near peak at **~155 units/round**. Retailers are fulfilling "
+                "pre-committed orders. EcoReclaim is operating at high utilisation. "
+                "The peak will begin fading from Round 7 onward."
+            ),
+            "tip": (
+                "Round 7 demand drops to ~130 units. "
+                "Start tapering your (s,S) policy downward — "
+                "over-ordering now creates excess inventory you'll carry through "
+                "the low season at $1/unit/round holding cost."
+            ),
+        },
+        7: {
+            "title": "Q7 — Post-Peak Decline",
+            "body": (
+                "The peak has passed. Demand is declining to **~130 units/round**. "
+                "Retailer channel inventory is replenished. "
+                "The procurement team's focus shifts to controlled drawdown — "
+                "running inventory down without triggering stockouts in the off-season."
+            ),
+            "tip": (
+                "Consider lowering your order-up-to (S) to match declining demand. "
+                "A high S in low-demand rounds forces unnecessary orders and holding costs. "
+                "Remember: (s,S) changes take effect the *following* round."
+            ),
+        },
+        8: {
+            "title": "Q8 — Demand Cooling",
+            "body": (
+                "Demand is returning to the seasonal baseline: **~100 units/round**. "
+                "Distributors are managing their own channel inventory down. "
+                "**Two rounds remain** — your end-of-game inventory position matters."
+            ),
+            "tip": (
+                "Inventory held at Round 10's end-of-game earns no revenue but incurs "
+                "holding costs. Size your orders in Rounds 8–9 to minimise surplus stock. "
+                "Orders placed this round arrive Round 9."
+            ),
+        },
+        9: {
+            "title": "Q9 — Off Season Returns",
+            "body": (
+                "Demand has dropped to **~80 units/round** — back to pre-season levels. "
+                "Your sustainability grade is crystallising. "
+                "The board will review how well the seasonal pattern was anticipated "
+                "and whether stockouts occurred during the peak."
+            ),
+            "tip": (
+                "Circular orders placed now arrive Round 10 (lead time 1). "
+                "Demand in Round 10 averages ~65 units. "
+                "Avoid over-ordering — end-of-game surplus has no value."
+            ),
+        },
+        10: {
+            "title": "Q10 — Year End",
+            "body": (
+                "The fiscal year closes. Demand is at its seasonal low: **~65 units/round**. "
+                "Any inventory ordered this round arrives **after the simulation ends** "
+                "and will not count toward your score. "
+                "The board will assess whether the seasonal cycle was anticipated and managed well."
+            ),
+            "tip": (
+                "End-of-game inventory earns holding costs but no revenue. "
+                "Aim to end with minimal surplus. "
+                "Your score reflects the full seasonal cycle — peak service level and off-season discipline."
+            ),
+        },
     },
-    7: {
-        "title": "Q7 — Regulatory Tailwinds",
-        "body": (
-            "The EU Carbon Border Adjustment Mechanism passes into law, targeting carbon-intensive "
-            "imports. Analysts expect $8+/kg CO₂e to persist for years. Circular sourcing is no "
-            "longer just ethical — it is the economically rational choice."
-        ),
-        "tip": (
-            "Your cumulative carbon tab is visible in the chart below. "
-            "Compare your trajectory against a hypothetical 100% circular scenario."
-        ),
-    },
-    8: {
-        "title": "Q8 — Partial Recovery",
-        "body": (
-            "Mediators report progress at the mine. A partial workforce returned, but full "
-            "capacity is months away. Primary reliability remains low. EcoReclaim reports "
-            "strong yield conditions. **Two rounds remain** — your final pipeline decisions are critical."
-        ),
-        "tip": (
-            "Primary orders placed in Round 8 (lead time 2) arrive Round 10. "
-            "Circular orders arrive Round 9. Map out your final two rounds now."
-        ),
-    },
-    9: {
-        "title": "Q9 — Endgame",
-        "body": (
-            "Primary supply is recovering but carbon pricing stays at **$8/kg CO₂e**. "
-            "Your sustainability grade is crystallising. The board will review SAP, "
-            "circular mix percentage, and stockout record at the end of Q10."
-        ),
-        "tip": (
-            "Circular orders placed now arrive Round 10. Primary (lead time 2) arrives Round 11 "
-            "— after the simulation ends. Circular is your only in-time option."
-        ),
-    },
-    10: {
-        "title": "Q10 — Final Quarter",
-        "body": (
-            "The board meeting is confirmed. Shareholders, ESG auditors, and the press are watching. "
-            "Any inventory ordered this round arrives **after the simulation ends** and will not "
-            "count toward your score. Focus on fulfilling demand from your current pipeline."
-        ),
-        "tip": (
-            "Avoid over-ordering — holding costs apply to end-of-round inventory. "
-            "Your score is now largely determined. Make your final decisions count."
-        ),
-    },
+}
+
+# ── Scenario banners (shown persistently after shock_triggered = True) ─────────
+# None = no persistent banner for this scenario (narrative handles it instead).
+SCENARIO_BANNERS = {
+    "base_game":       (
+        "MINING STRIKE — Primary lead time: **2 rounds** | "
+        f"Carbon price: **${CARBON_PRICE_SHOCK:.0f}/kg CO₂e** (was ${CARBON_PRICE_NORMAL:.0f})"
+    ),
+    "demand_surge":    "DEMAND SURGE — Market demand has roughly doubled | Volatility elevated",
+    "carbon_ratchet":  None,
+    "supplier_failure": (
+        "SUPPLIER FAILURE — EcoReclaim has ceased operations | "
+        f"Circular sourcing unavailable | Carbon price: **${CARBON_PRICE_SHOCK:.0f}/kg CO₂e**"
+    ),
+    "known_shock":     (
+        "MINING STRIKE (as forecast) — Primary lead time: **2 rounds** | "
+        f"Carbon price: **${CARBON_PRICE_SHOCK:.0f}/kg CO₂e**"
+    ),
+    "seasonal":        None,
+}
+
+# ── Incompatible scenario / game-mode combinations ─────────────────────────────
+INCOMPATIBLE_COMBOS = {
+    ("supplier_failure", "circular_lock"),
 }
 
 
@@ -240,7 +968,6 @@ def _init():
         st.session_state["onboarding_step"] = 0
         st.session_state["onboarding_complete"] = False
         st.session_state["game_mode"] = "free_play"
-        st.session_state["shock_banner_shown"] = False
         st.session_state["policy_changes"] = 0
 
 
@@ -589,24 +1316,44 @@ def _onboarding_setup():
     st.markdown(
         '<h2 style="color:#e6edf3; text-align:center;">Configure Your Strategy</h2>'
         '<p style="color:#8b949e; text-align:center; margin-bottom:2rem;">'
-        'Set your inventory policy and sourcing approach before the simulation begins. '
-        'These can be adjusted each round, but your starting choices matter.</p>',
+        'Choose a scenario, set your inventory policy, and select a sourcing mode '
+        'before the simulation begins.</p>',
         unsafe_allow_html=True,
     )
     _step_indicator(3)
     st.markdown("<br>", unsafe_allow_html=True)
 
+    # ── Scenario selector (full width) ────────────────────────────────────────
+    scenario_keys = list(SCENARIOS.keys())
+    scenario_labels = [SCENARIOS[k]["label"] for k in scenario_keys]
+    default_idx = scenario_keys.index(st.session_state.get("_setup_scenario", "base_game"))
+
+    selected_scenario = st.selectbox(
+        "Scenario",
+        options=scenario_keys,
+        format_func=lambda k: SCENARIOS[k]["label"],
+        index=default_idx,
+        key="setup_scenario_select",
+    )
+    st.session_state["_setup_scenario"] = selected_scenario
+    _card(
+        f'<p style="color:#8b949e; margin:0; font-size:0.9rem;">'
+        f'{SCENARIOS[selected_scenario]["description"]}</p>',
+        border_color="#30363d",
+    )
+
+    st.markdown("<br>", unsafe_allow_html=True)
     left, right = st.columns(2)
 
     with left:
         st.markdown("### Game Mode")
         game_mode = st.radio(
-            "Select a scenario:",
+            "Select a mode:",
             options=["free_play", "primary_lock", "circular_lock"],
             format_func=lambda x: {
                 "free_play": "Free Play — All decisions are yours",
-                "primary_lock": "Primary Lock — 100% primary sourcing (carbon exposure study)",
-                "circular_lock": "Circular Challenge — 100% circular sourcing (yield risk study)",
+                "primary_lock": "Primary Lock — 100% primary sourcing",
+                "circular_lock": "Circular Challenge — 100% circular sourcing",
             }[x],
             index=["free_play", "primary_lock", "circular_lock"].index(
                 st.session_state.get("game_mode", "free_play")
@@ -615,10 +1362,19 @@ def _onboarding_setup():
         )
         mode_descriptions = {
             "free_play": "You control everything: reorder points, order-up-to levels, and sourcing mix each round.",
-            "primary_lock": "Sourcing is locked to 100% primary. Focus on inventory policy and observe your carbon footprint grow — especially if the carbon price changes.",
+            "primary_lock": "Sourcing is locked to 100% primary. Focus on inventory policy and observe your carbon footprint grow.",
             "circular_lock": "Sourcing is locked to 100% circular. Learn to manage yield uncertainty and higher per-unit costs while keeping carbon low.",
         }
         st.info(mode_descriptions[game_mode])
+
+        # Incompatibility check
+        combo_invalid = (selected_scenario, game_mode) in INCOMPATIBLE_COMBOS
+        if combo_invalid:
+            st.error(
+                f"**{SCENARIOS[selected_scenario]['label']}** is not compatible with "
+                f"**Circular Challenge** mode — the circular supplier becomes unavailable "
+                f"mid-game. Choose Free Play or Primary Lock."
+            )
 
         st.markdown("### Sourcing Mix")
         if game_mode == "primary_lock":
@@ -696,11 +1452,11 @@ def _onboarding_setup():
     with btn_col:
         if st.button(
             "BEGIN SIMULATION →",
-            disabled=not setup_valid,
+            disabled=not setup_valid or combo_invalid,
             width='stretch',
         ):
             # Apply setup choices to game state
-            state = init_game_state(seed=42)
+            state = init_game_state(seed=42, scenario=selected_scenario)
             state["s_reorder_point"] = setup_s
             state["S_order_up_to"] = setup_S
             state["sourcing_mix_pct"] = setup_mix
@@ -708,7 +1464,6 @@ def _onboarding_setup():
                 st.session_state[k] = v
             st.session_state["game_mode"] = game_mode
             st.session_state["onboarding_complete"] = True
-            st.session_state["shock_banner_shown"] = False
             st.rerun()
 
     _nav_buttons(3)
@@ -752,6 +1507,8 @@ with st.sidebar:
 
     mode_label = {"free_play": "Free Play", "primary_lock": "Primary Lock",
                   "circular_lock": "Circular Challenge"}.get(game_mode, game_mode)
+    scenario_key = st.session_state.get("scenario", "base_game")
+    st.caption(f"Scenario: {SCENARIOS[scenario_key]['label']}")
     st.caption(f"Mode: {mode_label}")
     st.caption(f"Policy changes: {st.session_state.get('policy_changes', 0)}")
     st.divider()
@@ -863,6 +1620,7 @@ GAME_KEYS = {
     "pipeline", "s_reorder_point", "S_order_up_to", "sourcing_mix_pct",
     "history", "cumulative_sap", "cumulative_carbon", "rng",
     "manual_primary_override", "manual_circular_override",
+    "scenario",
 }
 
 if advance and inputs_valid and not st.session_state["game_over"]:
@@ -890,9 +1648,6 @@ if advance and inputs_valid and not st.session_state["game_over"]:
     # Now promote pending (s,S) to effective — takes effect next round
     st.session_state["s_reorder_point"] = _pend_s
     st.session_state["S_order_up_to"] = _pend_S
-
-    if st.session_state["current_round"] > SHOCK_ROUND and not st.session_state.get("shock_banner_shown"):
-        st.session_state["shock_banner_shown"] = True
 
     st.session_state["needs_scroll"] = True
     st.session_state["scroll_counter"] = st.session_state.get("scroll_counter", 0) + 1
@@ -973,7 +1728,28 @@ if st.session_state["game_over"]:
         circ_pct = (total_circ_ordered / total_ordered * 100) if total_ordered > 0 else 0
         stockout_rounds = sum(1 for h in history if h["stockout_units"] > 0)
 
-        shock_carbon_price = CARBON_PRICE_SHOCK
+        _fin_scenario_key = st.session_state.get("scenario", "base_game")
+        _sc_prices = SCENARIOS[_fin_scenario_key]["carbon_prices"]
+        _max_carbon = max(_sc_prices)
+        _min_carbon = min(_sc_prices)
+        _carbon_changed = _max_carbon > _min_carbon
+        _event_round_fin = SCENARIOS[_fin_scenario_key].get("event_round")
+
+        if _carbon_changed:
+            _carbon_note = (
+                f'The peak carbon price in this scenario was '
+                f'<strong>${_max_carbon:.0f}/kg CO₂e</strong>, which is '
+                f'<strong style="color:#3fb950;">{_max_carbon/p_star:.1f}×</strong> above P*. '
+                f'From Round {_event_round_fin} onward, circular sourcing was strongly '
+                f'cost-justified even before ESG considerations.'
+            )
+        else:
+            _carbon_note = (
+                f'Carbon pricing was constant at <strong>${_max_carbon:.0f}/kg CO₂e</strong> '
+                f'throughout this scenario — already above P* (${p_star:.2f}/kg CO₂e), '
+                f'so circular sourcing was cost-justified from Round 1.'
+            )
+
         st.markdown(f"""
         <div style="background:#161b22; border:1px solid #30363d; border-radius:8px; padding:1rem;">
           <table style="width:100%; border-collapse:collapse; font-family:monospace;">
@@ -993,11 +1769,8 @@ if st.session_state["game_over"]:
           <hr style="border-color:#30363d; margin:0.8rem 0;">
           <p style="color:#8b949e; font-size:0.82rem; margin:0;">
             <strong style="color:#58a6ff;">P* = ${p_star:.2f}/kg CO₂e</strong>
-            — the carbon price at which circular becomes cheaper than primary.<br><br>
-            The shock carbon price of <strong>${shock_carbon_price:.0f}/kg CO₂e</strong> is
-            <strong style="color:#3fb950;">{shock_carbon_price/p_star:.1f}×</strong> above P*.
-            From Round {SHOCK_ROUND} onward, circular sourcing was strongly cost-justified
-            even before ESG considerations.
+            — the carbon price at which circular becomes cheaper than primary on a total-cost basis.<br><br>
+            {_carbon_note}
           </p>
         </div>
         """, unsafe_allow_html=True)
@@ -1007,10 +1780,15 @@ if st.session_state["game_over"]:
     st.markdown("### SAP Trajectory")
     df_hist = pd.DataFrame(history)
     fig_sap = make_subplots(specs=[[{"secondary_y": True}]])
+    _sap_scenario_key = st.session_state.get("scenario", "base_game")
+    _sap_event_round = SCENARIOS[_sap_scenario_key].get("event_round")
+    _bar_colors = [
+        "#f85149" if (_sap_event_round and r >= _sap_event_round) else "#58a6ff"
+        for r in df_hist["round"]
+    ]
     fig_sap.add_trace(
         go.Bar(x=df_hist["round"], y=df_hist["round_profit"], name="Round Profit",
-               marker_color=["#f85149" if r >= SHOCK_ROUND else "#58a6ff" for r in df_hist["round"]],
-               opacity=0.85),
+               marker_color=_bar_colors, opacity=0.85),
         secondary_y=False,
     )
     fig_sap.add_trace(
@@ -1018,8 +1796,11 @@ if st.session_state["game_over"]:
                    line=dict(color="#3fb950", width=2), mode="lines+markers"),
         secondary_y=True,
     )
-    fig_sap.add_vline(x=SHOCK_ROUND - 0.5, line_dash="dash", line_color="#f85149", opacity=0.6,
-                      annotation_text="SHOCK", annotation_font_color="#f85149")
+    if _sap_event_round is not None:
+        fig_sap.add_vline(
+            x=_sap_event_round - 0.5, line_dash="dash", line_color="#f85149", opacity=0.6,
+            annotation_text="EVENT", annotation_font_color="#f85149",
+        )
     fig_sap.update_layout(**PLOT_LAYOUT, title="Round Profit & Cumulative SAP",
                           xaxis_title="Round")
     fig_sap.update_yaxes(title_text="Round Profit ($)", secondary_y=False,
@@ -1058,22 +1839,49 @@ if st.session_state["game_over"]:
 
     st.divider()
     st.markdown("### Debrief Discussion Questions")
+    _dq_scenario = st.session_state.get("scenario", "base_game")
+    _dq_event = SCENARIOS[_dq_scenario].get("event_round")
+    _dq_max_carbon = max(SCENARIOS[_dq_scenario]["carbon_prices"])
+    _dq_carbon_changed = _dq_max_carbon > min(SCENARIOS[_dq_scenario]["carbon_prices"])
+
+    # Q1: Switching Point — tailor to whether carbon changed
+    if _dq_carbon_changed:
+        _q1_body = (
+            f"P* = **${p_star:.2f}/kg CO₂e**. The peak carbon price in this scenario was "
+            f"**${_dq_max_carbon:.0f}/kg CO₂e** — {_dq_max_carbon/p_star:.1f}× above P*. "
+            f"When did circular sourcing become economically rational, and did your strategy reflect this in time?"
+        )
+    else:
+        _q1_body = (
+            f"P* = **${p_star:.2f}/kg CO₂e**. The carbon price was constant at "
+            f"**${_dq_max_carbon:.0f}/kg CO₂e** — already above P* from Round 1. "
+            f"Did your sourcing mix reflect this cost advantage of circular throughout the game?"
+        )
+
+    # Q2: Pipeline / Lead Times — only relevant for scenarios with lead-time change
+    _lead_times = SCENARIOS[_dq_scenario]["lead_times_primary"]
+    _lead_time_changed = len(set(_lead_times)) > 1
+    if _lead_time_changed:
+        _q2 = ("2. Pipeline Risk & Lead Times",
+               f"When the disruption hit in Round {_dq_event}, primary lead time doubled to 2 rounds. "
+               "How did the orders already in your pipeline shape your resilience? "
+               "What would you pre-position differently if you played again?")
+    else:
+        _q2 = ("2. Pipeline & Demand Planning",
+               "Primary lead time was constant at 1 round throughout this scenario. "
+               "How did the timing of your orders relative to demand changes affect your inventory position? "
+               "What would a better pipeline planning approach look like?")
+
     questions = [
-        ("1. The Switching Point",
-         f"P* = **${p_star:.2f}/kg CO₂e**. The shock carbon price of ${CARBON_PRICE_SHOCK:.0f}/kg "
-         f"is {CARBON_PRICE_SHOCK/p_star:.1f}× above P*. When did circular sourcing become "
-         f"economically rational — and did your strategy reflect this in time?"),
-        ("2. Pipeline Risk & Lead Times",
-         "When the shock hit in Round 5, primary lead time doubled to 2 rounds. How did the "
-         "orders already in your pipeline shape your resilience? What would you pre-position "
-         "differently if you played again?"),
+        ("1. The Switching Point", _q1_body),
+        _q2,
         ("3. Yield Uncertainty & Over-ordering",
          "EcoReclaim's yield varied ~N(70%, 10%) each round. Did you build a yield buffer into "
          "your circular orders? What systematic approach could reduce the risk of under-receiving?"),
         ("4. (s,S) Policy Design",
-         "Reflect on your reorder point (s) and order-up-to (S). Were they calibrated for "
-         "normal demand variability? Did you adjust them after the shock changed lead times "
-         "and economics? What would an optimal policy look like?"),
+         "Reflect on your reorder point (s) and order-up-to (S). Were they well-calibrated for "
+         "the demand pattern in this scenario? Did you adjust them proactively or reactively? "
+         "What would an optimal policy look like?"),
         ("5. Carbon vs. Cost Trade-off",
          "Did you prioritise SAP maximisation or carbon minimisation? How would a stricter "
          "carbon budget constraint change your sourcing mix? At what carbon price would you "
@@ -1101,14 +1909,15 @@ if st.session_state["game_over"]:
             st.session_state["mc_done"] = True
 
         if st.session_state.get("mc_done"):
+            _mc_scenario = st.session_state.get("scenario", "base_game")
             with st.spinner("Searching for near-optimal policy and running simulations…"):
-                opt_s, opt_S, _ = _cached_find_optimal(student_mix)
+                opt_s, opt_S, _ = _cached_find_optimal(student_mix, _mc_scenario)
                 student_saps, student_so = _cached_monte_carlo(
-                    student_s, student_S, student_mix, 1000)
+                    student_s, student_S, student_mix, 1000, _mc_scenario)
                 optimal_saps, optimal_so = _cached_monte_carlo(
-                    opt_s, opt_S, student_mix, 1000)
+                    opt_s, opt_S, student_mix, 1000, _mc_scenario)
                 default_saps, default_so = _cached_monte_carlo(
-                    DEFAULT_S, DEFAULT_S_UPPER, student_mix, 1000)
+                    DEFAULT_S, DEFAULT_S_UPPER, student_mix, 1000, _mc_scenario)
 
             # Percentile of actual result within student's own distribution
             actual_pct = float((student_saps < cumulative_sap).mean() * 100)
@@ -1237,7 +2046,16 @@ if st.session_state["game_over"]:
                   <td style="color:#c9d1d9; text-align:right;">{st.session_state.get('policy_changes', 0)}</td></tr>
             </table>
             """, border_color="#58a6ff")
-        submit_disabled = not session_code.strip() or not nickname.strip()
+        submit_disabled = (
+            not session_code.strip()
+            or not nickname.strip()
+            or len(session_code.strip()) > 50
+            or len(nickname.strip()) > 40
+        )
+        if len(session_code.strip()) > 50:
+            st.error("Session code must be 50 characters or fewer.")
+        if len(nickname.strip()) > 40:
+            st.error("Nickname must be 40 characters or fewer.")
         if st.button("Submit Score →", disabled=submit_disabled, width='stretch'):
             try:
                 _supabase.table("scores").insert({
@@ -1251,6 +2069,7 @@ if st.session_state["game_over"]:
                     "total_carbon": round(total_carbon, 0),
                     "policy_changes": st.session_state.get("policy_changes", 0),
                     "game_mode": st.session_state.get("game_mode", "free_play"),
+                    "scenario": st.session_state.get("scenario", "base_game"),
                 }).execute()
                 st.session_state["score_submitted"] = True
                 st.session_state["submitted_nickname"] = nickname.strip()
@@ -1288,27 +2107,42 @@ badge_col.markdown(
 )
 
 # Shock banner
-if st.session_state.get("shock_triggered") or rnd > SHOCK_ROUND:
-    st.error(
-        "MINING STRIKE EVENT — Primary lead time: **2 rounds** | "
-        f"Carbon price: **${CARBON_PRICE_SHOCK:.0f}/kg CO₂e** (was ${CARBON_PRICE_NORMAL:.0f})"
-    )
+_scenario_key = st.session_state.get("scenario", "base_game")
+_banner_text = SCENARIO_BANNERS.get(_scenario_key)
+if _banner_text and st.session_state.get("shock_triggered"):
+    st.error(_banner_text)
 
 # ── Round narrative ────────────────────────────────────────────────────────────
-narrative = ROUND_NARRATIVES.get(rnd)
+_scenario_narratives = SCENARIO_NARRATIVES.get(_scenario_key, SCENARIO_NARRATIVES["base_game"])
+narrative = _scenario_narratives.get(rnd)
 if narrative:
     title = narrative["title"]
     body = narrative["body"]
 
-    # Dynamic substitution for Round 3
-    if rnd == 3 and history:
-        last_yield = history[-1]["circular_yield"]
-        received = history[-1]["circular_received"]
-        yield_comment = "above average" if last_yield > 0.70 else ("average" if last_yield > 0.65 else "below average")
-        try:
-            body = body.format(yield_pct=last_yield, yield_comment=yield_comment, received=received)
-        except (KeyError, ValueError):
-            pass
+    # Dynamic substitution where {yield_pct}, {yield_comment}, {received} appear
+    if "{yield_pct}" in body and history:
+        last = history[-1]
+        if last["order_circular"] > 0:
+            last_yield = last["circular_yield"]
+            received = last["circular_received"]
+            yield_comment = (
+                "above average" if last_yield > 0.70
+                else ("average" if last_yield > 0.65 else "below average")
+            )
+            try:
+                body = body.format(
+                    yield_pct=last_yield, yield_comment=yield_comment, received=received
+                )
+            except (KeyError, ValueError):
+                pass
+        else:
+            # No circular orders placed last round — show a static fallback
+            body = (
+                "No circular orders were placed last quarter, so EcoReclaim's yield data "
+                "is not available for your account. Urban mining yield follows N(70%, σ=10%) — "
+                "if you order circular units, expect to receive ~70% of the quantity ordered, "
+                "with variation. Consider whether a mixed sourcing strategy would strengthen resilience."
+            )
 
     with st.expander(f"Situation Report — {title}", expanded=True):
         st.markdown(body)
@@ -1374,11 +2208,12 @@ if history:
         st.plotly_chart(fig_carbon, width='stretch')
 
     st.markdown("### Cumulative Cost Breakdown")
-    df_hist["cum_cost_primary"] = df_hist["cost_primary"].cumsum()
-    df_hist["cum_cost_circular"] = df_hist["cost_circular"].cumsum()
-    df_hist["cum_holding"] = df_hist["cost_holding"].cumsum()
-    df_hist["cum_stockout"] = df_hist["cost_stockout"].cumsum()
-    df_hist["cum_carbon"] = df_hist["cost_carbon"].cumsum()
+    df_costs = df_hist.copy()
+    df_costs["cum_cost_primary"] = df_costs["cost_primary"].cumsum()
+    df_costs["cum_cost_circular"] = df_costs["cost_circular"].cumsum()
+    df_costs["cum_holding"] = df_costs["cost_holding"].cumsum()
+    df_costs["cum_stockout"] = df_costs["cost_stockout"].cumsum()
+    df_costs["cum_carbon"] = df_costs["cost_carbon"].cumsum()
 
     fig_costs = go.Figure()
     for label, col, color in [
@@ -1389,7 +2224,7 @@ if history:
         ("Carbon Tax", "cum_carbon", "#a371f7"),
     ]:
         fig_costs.add_trace(go.Scatter(
-            x=df_hist["round"], y=df_hist[col], stackgroup="costs",
+            x=df_costs["round"], y=df_costs[col], stackgroup="costs",
             name=label, mode="lines",
             line=dict(width=0.5, color=color), fillcolor=color, opacity=0.7,
         ))

@@ -19,7 +19,7 @@ DEMAND_MEAN = 100.0
 DEMAND_STD = 20.0
 
 CARBON_PRICE_NORMAL = 2.0   # $/kg CO2e
-CARBON_PRICE_SHOCK = 8.0    # $/kg CO2e (round 5+)
+CARBON_PRICE_SHOCK = 8.0    # $/kg CO2e (base game round 5+)
 
 HOLDING_COST = 1.0          # $/unit/round
 STOCKOUT_PENALTY = 20.0     # $/unit short
@@ -37,9 +37,109 @@ DEFAULT_MIX = 80            # % primary (deliberately high — carbon-heavy)
 P_STAR = (CIRCULAR_COST - PRIMARY_COST) / (PRIMARY_CARBON - CIRCULAR_CARBON)
 
 
+# ── Scenario definitions ───────────────────────────────────────────────────────
+# Each scenario specifies per-round parameters (lists of length TOTAL_ROUNDS,
+# index 0 = round 1).
+#
+# demand_mean / demand_std   : demand distribution each round
+# carbon_prices              : carbon tax ($/kg CO2e) each round
+# lead_times_primary         : primary lead time (rounds) each round
+# circular_available         : whether circular supplier accepts new orders
+# event_round                : round at which the main event triggers (None = no
+#                              single event; used for shock_triggered flag)
+# label / description        : shown in the onboarding dropdown
+
+SCENARIOS = {
+    "base_game": {
+        "label": "Base Game",
+        "description": (
+            "A wildcat strike hits the primary mine in Round 5, doubling lead time and "
+            "spiking the carbon price from $2 to $8/kg CO₂e. The classic (s,S) + "
+            "circular-sourcing challenge."
+        ),
+        "event_round":        SHOCK_ROUND,
+        "demand_mean":        [100] * TOTAL_ROUNDS,
+        "demand_std":         [20]  * TOTAL_ROUNDS,
+        "carbon_prices":      [CARBON_PRICE_NORMAL] * 4 + [CARBON_PRICE_SHOCK] * 6,
+        "lead_times_primary": [PRIMARY_LEAD_TIME_NORMAL] * 4 + [PRIMARY_LEAD_TIME_SHOCK] * 6,
+        "circular_available": [True] * TOTAL_ROUNDS,
+    },
+    "demand_surge": {
+        "label": "Demand Surge",
+        "description": (
+            "A viral product launch roughly doubles demand from Round 5 onwards. "
+            "No supply disruption — the challenge is pure demand-side. "
+            "Avoid stockouts while managing the bullwhip effect."
+        ),
+        "event_round":        5,
+        "demand_mean":        [100, 100, 105, 110, 185, 185, 180, 175, 170, 165],
+        "demand_std":         [20,  20,  20,  22,  40,  40,  38,  35,  32,  30],
+        "carbon_prices":      [CARBON_PRICE_NORMAL] * TOTAL_ROUNDS,
+        "lead_times_primary": [PRIMARY_LEAD_TIME_NORMAL] * TOTAL_ROUNDS,
+        "circular_available": [True] * TOTAL_ROUNDS,
+    },
+    "carbon_ratchet": {
+        "label": "Carbon Ratchet",
+        "description": (
+            "Carbon pricing rises by $2/kg CO₂e every two rounds — from $2 to $10 — "
+            "following a published regulatory schedule known from Round 1. "
+            "Will you act early or keep optimising short-term?"
+        ),
+        "event_round":        3,   # first step-up round
+        "demand_mean":        [100] * TOTAL_ROUNDS,
+        "demand_std":         [20]  * TOTAL_ROUNDS,
+        "carbon_prices":      [2, 2, 4, 4, 6, 6, 8, 8, 10, 10],
+        "lead_times_primary": [PRIMARY_LEAD_TIME_NORMAL] * TOTAL_ROUNDS,
+        "circular_available": [True] * TOTAL_ROUNDS,
+    },
+    "supplier_failure": {
+        "label": "Supplier Failure",
+        "description": (
+            "EcoReclaim Urban Mining collapses in Round 5 — circular sourcing is "
+            "permanently lost. How exposed are you to single-supplier concentration risk? "
+            "(Incompatible with Circular Challenge mode.)"
+        ),
+        "event_round":        5,
+        "demand_mean":        [100] * TOTAL_ROUNDS,
+        "demand_std":         [20]  * TOTAL_ROUNDS,
+        "carbon_prices":      [CARBON_PRICE_NORMAL] * 4 + [CARBON_PRICE_SHOCK] * 6,
+        "lead_times_primary": [PRIMARY_LEAD_TIME_NORMAL] * TOTAL_ROUNDS,
+        "circular_available": [True] * 4 + [False] * 6,
+    },
+    "known_shock": {
+        "label": "Known Shock",
+        "description": (
+            "Same mechanics as the Base Game, but the Round 5 disruption is announced "
+            "from the start. Intelligence confirms a strike will hit in Q5. "
+            "Will you prepare differently with perfect foresight?"
+        ),
+        "event_round":        SHOCK_ROUND,
+        "demand_mean":        [100] * TOTAL_ROUNDS,
+        "demand_std":         [20]  * TOTAL_ROUNDS,
+        "carbon_prices":      [CARBON_PRICE_NORMAL] * 4 + [CARBON_PRICE_SHOCK] * 6,
+        "lead_times_primary": [PRIMARY_LEAD_TIME_NORMAL] * 4 + [PRIMARY_LEAD_TIME_SHOCK] * 6,
+        "circular_available": [True] * TOTAL_ROUNDS,
+    },
+    "seasonal": {
+        "label": "Seasonal Demand",
+        "description": (
+            "Demand follows a predictable seasonal curve — quiet in Q1/Q2, peaking "
+            "sharply in Q5/Q6, then winding down by Q10. No supply disruption. "
+            "The challenge is anticipatory stocking and timely drawdown."
+        ),
+        "event_round":        None,
+        "demand_mean":        [65, 80, 100, 130, 160, 155, 130, 100, 80, 65],
+        "demand_std":         [12, 15,  20,  25,  30,  28,  25,  20, 15, 12],
+        "carbon_prices":      [CARBON_PRICE_NORMAL] * TOTAL_ROUNDS,
+        "lead_times_primary": [PRIMARY_LEAD_TIME_NORMAL] * TOTAL_ROUNDS,
+        "circular_available": [True] * TOTAL_ROUNDS,
+    },
+}
+
+
 # ── State initialisation ───────────────────────────────────────────────────────
-def init_game_state(seed=None):
-    """Return a fresh state dict."""
+def init_game_state(seed=None, scenario="base_game"):
+    """Return a fresh state dict for the given scenario."""
     rng = np.random.default_rng(seed)
     return {
         "current_round": 1,
@@ -54,12 +154,15 @@ def init_game_state(seed=None):
         "cumulative_sap": 0.0,
         "cumulative_carbon": 0.0,
         "rng": rng,
+        "scenario": scenario,
     }
 
 
 # ── Random generators ──────────────────────────────────────────────────────────
-def generate_demand(rng):
-    return float(max(0.0, rng.normal(DEMAND_MEAN, DEMAND_STD)))
+def generate_demand(rng, round_num=1, scenario_key="base_game"):
+    sc = SCENARIOS[scenario_key]
+    idx = round_num - 1
+    return float(max(0.0, rng.normal(sc["demand_mean"][idx], sc["demand_std"][idx])))
 
 
 def generate_circular_yield(rng):
@@ -67,12 +170,16 @@ def generate_circular_yield(rng):
 
 
 # ── Round parameters ───────────────────────────────────────────────────────────
-def get_round_params(round_num):
-    shock_active = round_num >= SHOCK_ROUND
+def get_round_params(round_num, scenario_key="base_game"):
+    sc = SCENARIOS[scenario_key]
+    idx = round_num - 1
+    event_round = sc.get("event_round")
+    shock_active = (event_round is not None) and (round_num >= event_round)
     return {
-        "lead_time_primary": PRIMARY_LEAD_TIME_SHOCK if shock_active else PRIMARY_LEAD_TIME_NORMAL,
-        "carbon_price": CARBON_PRICE_SHOCK if shock_active else CARBON_PRICE_NORMAL,
-        "shock_active": shock_active,
+        "lead_time_primary":  sc["lead_times_primary"][idx],
+        "carbon_price":       sc["carbon_prices"][idx],
+        "shock_active":       shock_active,
+        "circular_available": sc["circular_available"][idx],
     }
 
 
@@ -155,11 +262,13 @@ def run_round(state):
 
     rng = state["rng"]
     round_num = state["current_round"]
+    scenario_key = state.get("scenario", "base_game")
 
     # 1. Round parameters
-    params = get_round_params(round_num)
-    lead_time_primary = params["lead_time_primary"]
-    carbon_price = params["carbon_price"]
+    params = get_round_params(round_num, scenario_key)
+    lead_time_primary    = params["lead_time_primary"]
+    carbon_price         = params["carbon_price"]
+    circular_available   = params["circular_available"]
 
     # 2. Process pipeline arrivals
     arriving_units, remaining_pipeline = process_arrivals(state["pipeline"], round_num)
@@ -177,7 +286,7 @@ def run_round(state):
     starting_inventory = state["inventory"] + arriving_units
 
     # 3. Generate demand
-    demand = generate_demand(rng)
+    demand = generate_demand(rng, round_num, scenario_key)
 
     # 4. Fulfil demand
     units_sold = min(starting_inventory, demand)
@@ -223,6 +332,10 @@ def run_round(state):
         ending_inventory, s, S, mix_pct, manual_primary, manual_circular
     )
 
+    # Block new circular orders when supplier is unavailable
+    if not circular_available:
+        order_circular = 0.0
+
     # 12. Place orders into pipeline
     new_pipeline, yield_factor = place_orders(
         remaining_pipeline, round_num,
@@ -256,6 +369,7 @@ def run_round(state):
         "total_carbon": total_carbon,
         "lead_time_primary": lead_time_primary,
         "carbon_price": carbon_price,
+        "circular_available": circular_available,
     }
 
     new_history = state["history"] + [history_entry]
@@ -265,7 +379,7 @@ def run_round(state):
     state.update({
         "current_round": next_round,
         "game_over": game_over,
-        "shock_triggered": next_round > SHOCK_ROUND or state["shock_triggered"],
+        "shock_triggered": params["shock_active"] or state["shock_triggered"],
         "inventory": ending_inventory,
         "pipeline": new_pipeline,
         "history": new_history,
@@ -279,7 +393,7 @@ def run_round(state):
 
 
 # ── Monte Carlo engine ─────────────────────────────────────────────────────────
-def run_game_fast(s, S, mix_pct, seed=None):
+def run_game_fast(s, S, mix_pct, seed=None, scenario="base_game"):
     """
     Lightweight full 10-round simulation for Monte Carlo use.
     Skips history building; returns (cumulative_sap, stockout_rounds).
@@ -290,11 +404,13 @@ def run_game_fast(s, S, mix_pct, seed=None):
     cumulative_sap = 0.0
     stockout_rounds = 0
     pct_primary = mix_pct / 100.0
+    sc = SCENARIOS[scenario]
 
     for round_num in range(1, TOTAL_ROUNDS + 1):
-        params = get_round_params(round_num)
-        lead_time_primary = params["lead_time_primary"]
-        carbon_price = params["carbon_price"]
+        idx = round_num - 1
+        lead_time_primary  = sc["lead_times_primary"][idx]
+        carbon_price       = sc["carbon_prices"][idx]
+        circular_avail     = sc["circular_available"][idx]
 
         arriving_primary = sum(
             e["units"] for e in pipeline
@@ -307,7 +423,7 @@ def run_game_fast(s, S, mix_pct, seed=None):
         pipeline = [e for e in pipeline if e["arrive_round"] > round_num]
 
         starting_inv = inventory + arriving_primary + arriving_circular
-        demand = float(max(0.0, rng.normal(DEMAND_MEAN, DEMAND_STD)))
+        demand = float(max(0.0, rng.normal(sc["demand_mean"][idx], sc["demand_std"][idx])))
         units_sold = min(starting_inv, demand)
         stockout = max(0.0, demand - starting_inv)
         ending_inv = starting_inv - units_sold
@@ -328,10 +444,10 @@ def run_game_fast(s, S, mix_pct, seed=None):
 
         if ending_inv <= s:
             total_order = max(0.0, S - ending_inv)
-            order_primary = total_order * pct_primary
-            order_circular = total_order * (1.0 - pct_primary)
+            order_primary  = total_order * pct_primary
+            order_circular = total_order * (1.0 - pct_primary) if circular_avail else 0.0
         else:
-            order_primary = 0.0
+            order_primary  = 0.0
             order_circular = 0.0
 
         yield_factor = float(np.clip(rng.normal(0.70, 0.10), 0.0, 1.0))
@@ -351,28 +467,29 @@ def run_game_fast(s, S, mix_pct, seed=None):
     return cumulative_sap, stockout_rounds
 
 
-def run_monte_carlo(s, S, mix_pct, n_runs=1000):
+def run_monte_carlo(s, S, mix_pct, n_runs=1000, scenario="base_game"):
     """
-    Run n_runs independent games with the given (s, S, mix_pct) policy.
+    Run n_runs independent games with the given (s, S, mix_pct, scenario).
     Returns (sap_array, stockout_rounds_array).
     """
     saps = np.empty(n_runs)
     stockouts = np.empty(n_runs, dtype=int)
     for i in range(n_runs):
-        saps[i], stockouts[i] = run_game_fast(s, S, mix_pct, seed=i)
+        saps[i], stockouts[i] = run_game_fast(s, S, mix_pct, seed=i, scenario=scenario)
     return saps, stockouts
 
 
-def find_optimal_policy(mix_pct, n_runs_per_combo=500):
+def find_optimal_policy(mix_pct, n_runs_per_combo=500, scenario="base_game"):
     """
-    Grid search over (s, S) to maximise expected SAP for the given mix_pct.
+    Grid search over (s, S) to maximise expected SAP for the given mix_pct + scenario.
     Returns (best_s, best_S, best_mean_sap).
     Grid: s in [20..250 step 25], S in [s+50..450 step 25].
     """
     best_s, best_S, best_mean = DEFAULT_S, DEFAULT_S_UPPER, -np.inf
     for s in range(20, 251, 25):
         for S in range(s + 50, 451, 25):
-            saps, _ = run_monte_carlo(s, S, mix_pct, n_runs=n_runs_per_combo)
+            saps, _ = run_monte_carlo(s, S, mix_pct, n_runs=n_runs_per_combo,
+                                      scenario=scenario)
             mean_sap = float(saps.mean())
             if mean_sap > best_mean:
                 best_mean = mean_sap

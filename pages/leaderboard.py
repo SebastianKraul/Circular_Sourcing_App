@@ -157,6 +157,9 @@ _col_names   = ["#", "Nickname", "Grade", "Score (0-100)",
 if "policy_changes" in df.columns:
     _table_cols.append("policy_changes")
     _col_names.append("Policy Changes")
+if "scenario" in df.columns:
+    _table_cols.append("scenario")
+    _col_names.append("Scenario")
 
 display_df = df[_table_cols].copy()
 display_df.columns = _col_names
@@ -168,6 +171,15 @@ display_df["Mode"] = display_df["Mode"].map({
     "primary_lock": "Primary Lock",
     "circular_lock": "Circular Challenge",
 }).fillna(display_df["Mode"])
+if "Scenario" in display_df.columns:
+    display_df["Scenario"] = display_df["Scenario"].map({
+        "base_game": "Base Game",
+        "demand_surge": "Demand Surge",
+        "carbon_ratchet": "Carbon Ratchet",
+        "supplier_failure": "Supplier Failure",
+        "known_shock": "Known Shock",
+        "seasonal": "Seasonal",
+    }).fillna(display_df["Scenario"])
 
 st.dataframe(display_df, hide_index=True, width="stretch")
 
