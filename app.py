@@ -6,6 +6,7 @@ Streamlit UI + round advancement controller.
 import random
 import textwrap
 
+import numpy as np
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
@@ -15,6 +16,8 @@ from plotly.subplots import make_subplots
 from simulation import (
     init_game_state,
     run_round,
+    run_monte_carlo,
+    find_optimal_policy,
     compute_switching_point,
     compute_sustainability_rating,
     TOTAL_ROUNDS,
@@ -45,6 +48,19 @@ def _get_supabase():
         return create_client(url, key)
     except Exception:
         return None
+
+
+# ── Monte Carlo cache wrappers ─────────────────────────────────────────────────
+# Defined at module level so @st.cache_data persists across reruns.
+
+@st.cache_data(show_spinner=False)
+def _cached_monte_carlo(s, S, mix_pct, n_runs):
+    return run_monte_carlo(s, S, mix_pct, n_runs)
+
+
+@st.cache_data(show_spinner=False)
+def _cached_find_optimal(mix_pct):
+    return find_optimal_policy(mix_pct)
 
 
 # ── Page config ────────────────────────────────────────────────────────────────
@@ -1038,6 +1054,113 @@ if st.session_state["game_over"]:
     for title, body in questions:
         with st.expander(title):
             st.markdown(body)
+
+    # ── Policy Stress Test ──────────────────────────────────────────────────────
+    st.divider()
+    with st.expander("Policy Stress Test — Monte Carlo Analysis", expanded=False):
+        student_s   = int(st.session_state["s_reorder_point"])
+        student_S   = int(st.session_state["S_order_up_to"])
+        student_mix = int(st.session_state["sourcing_mix_pct"])
+
+        st.markdown(
+            f"Tests your final policy (**s={student_s}, S={student_S}, "
+            f"{student_mix}% primary**) across 1,000 random demand/yield scenarios, "
+            f"then finds the near-optimal (s,S) for that mix via grid search (~120 "
+            f"combinations × 150 runs each)."
+        )
+
+        if st.button("Run Analysis", key="run_mc_btn"):
+            st.session_state["mc_done"] = True
+
+        if st.session_state.get("mc_done"):
+            with st.spinner("Searching for near-optimal policy and running simulations…"):
+                opt_s, opt_S, _ = _cached_find_optimal(student_mix)
+                student_saps, student_so = _cached_monte_carlo(
+                    student_s, student_S, student_mix, 1000)
+                optimal_saps, optimal_so = _cached_monte_carlo(
+                    opt_s, opt_S, student_mix, 1000)
+                default_saps, default_so = _cached_monte_carlo(
+                    DEFAULT_S, DEFAULT_S_UPPER, student_mix, 1000)
+
+            # Percentile of actual result within student's own distribution
+            actual_pct = float((student_saps < cumulative_sap).mean() * 100)
+            sap_gap    = float(optimal_saps.mean() - student_saps.mean())
+            so_prob    = float((student_so > 0).mean() * 100)
+
+            mc1, mc2, mc3 = st.columns(3)
+            mc1.metric(
+                "Your result vs. your policy",
+                f"{actual_pct:.0f}th pct",
+                help="Where your actual game result falls within the distribution "
+                     "of 1,000 runs with identical (s,S) settings.",
+            )
+            mc2.metric(
+                "P(stockout ≥ 1 round)",
+                f"{so_prob:.0f}%",
+                help="Fraction of simulated games where your policy produced at "
+                     "least one stockout round.",
+            )
+            mc3.metric(
+                "Mean SAP gap to near-optimal",
+                f"${sap_gap:,.0f}",
+                help="How much more the near-optimal policy earns on average "
+                     "compared to your policy.",
+            )
+
+            # Histogram
+            fig_mc = go.Figure()
+            for label, saps, color in [
+                (f"Default  (s={DEFAULT_S}, S={DEFAULT_S_UPPER})", default_saps,  "#f85149"),
+                (f"Your policy  (s={student_s}, S={student_S})",   student_saps,  "#58a6ff"),
+                (f"Near-optimal  (s={opt_s}, S={opt_S})",          optimal_saps,  "#3fb950"),
+            ]:
+                fig_mc.add_trace(go.Histogram(
+                    x=saps, name=label,
+                    histnorm="probability",
+                    opacity=0.65,
+                    marker_color=color,
+                    nbinsx=40,
+                ))
+            fig_mc.add_vline(
+                x=cumulative_sap, line_dash="dash", line_color="#d29922",
+                annotation_text="Your actual result",
+                annotation_font_color="#d29922",
+            )
+            fig_mc.update_layout(
+                **PLOT_LAYOUT,
+                barmode="overlay",
+                title="SAP Distribution across 1,000 Random Scenarios",
+                xaxis=dict(gridcolor="#21262d", zerolinecolor="#30363d",
+                           title="Cumulative SAP ($)"),
+                yaxis=dict(gridcolor="#21262d", zerolinecolor="#30363d",
+                           title="Probability", tickformat=".0%"),
+            )
+            st.plotly_chart(fig_mc, width="stretch")
+
+            # Summary stats table
+            def _stats(saps, stockouts):
+                return {
+                    "Mean SAP ($)":          f"${saps.mean():,.0f}",
+                    "10th pct ($)":          f"${np.percentile(saps, 10):,.0f}",
+                    "90th pct ($)":          f"${np.percentile(saps, 90):,.0f}",
+                    "P(≥1 stockout round)":  f"{(stockouts > 0).mean():.0%}",
+                    "Avg stockout rounds":   f"{stockouts.mean():.2f}",
+                }
+
+            stats_df = pd.DataFrame({
+                f"Default (s={DEFAULT_S}, S={DEFAULT_S_UPPER})": _stats(default_saps, default_so),
+                f"Your policy (s={student_s}, S={student_S})":   _stats(student_saps, student_so),
+                f"Near-optimal (s={opt_s}, S={opt_S})":          _stats(optimal_saps, optimal_so),
+            }).T.reset_index()
+            stats_df.columns = ["Policy"] + list(stats_df.columns[1:])
+            st.dataframe(stats_df, hide_index=True, width="stretch")
+
+            st.info(
+                f"Near-optimal policy for **{student_mix}% primary / "
+                f"{100 - student_mix}% circular**: "
+                f"**s = {opt_s}**, **S = {opt_S}**  "
+                f"(found via grid search — step size 25, so true optimum may differ slightly)"
+            )
 
     # ── Score submission ────────────────────────────────────────────────────────
     st.divider()

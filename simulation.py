@@ -278,6 +278,109 @@ def run_round(state):
     return state
 
 
+# ── Monte Carlo engine ─────────────────────────────────────────────────────────
+def run_game_fast(s, S, mix_pct, seed=None):
+    """
+    Lightweight full 10-round simulation for Monte Carlo use.
+    Skips history building; returns (cumulative_sap, stockout_rounds).
+    """
+    rng = np.random.default_rng(seed)
+    inventory = float(STARTING_INVENTORY)
+    pipeline = []
+    cumulative_sap = 0.0
+    stockout_rounds = 0
+    pct_primary = mix_pct / 100.0
+
+    for round_num in range(1, TOTAL_ROUNDS + 1):
+        params = get_round_params(round_num)
+        lead_time_primary = params["lead_time_primary"]
+        carbon_price = params["carbon_price"]
+
+        arriving_primary = sum(
+            e["units"] for e in pipeline
+            if e["arrive_round"] <= round_num and e["source"] == "primary"
+        )
+        arriving_circular = sum(
+            e["units"] for e in pipeline
+            if e["arrive_round"] <= round_num and e["source"] == "circular"
+        )
+        pipeline = [e for e in pipeline if e["arrive_round"] > round_num]
+
+        starting_inv = inventory + arriving_primary + arriving_circular
+        demand = float(max(0.0, rng.normal(DEMAND_MEAN, DEMAND_STD)))
+        units_sold = min(starting_inv, demand)
+        stockout = max(0.0, demand - starting_inv)
+        ending_inv = starting_inv - units_sold
+
+        if stockout > 0:
+            stockout_rounds += 1
+
+        carbon = arriving_primary * PRIMARY_CARBON + arriving_circular * CIRCULAR_CARBON
+        cumulative_sap += (
+            units_sold * REVENUE_PER_UNIT
+            - arriving_primary * PRIMARY_COST
+            - arriving_circular * CIRCULAR_COST
+            - ending_inv * HOLDING_COST
+            - stockout * STOCKOUT_PENALTY
+            - carbon * carbon_price
+        )
+        inventory = ending_inv
+
+        if ending_inv <= s:
+            total_order = max(0.0, S - ending_inv)
+            order_primary = total_order * pct_primary
+            order_circular = total_order * (1.0 - pct_primary)
+        else:
+            order_primary = 0.0
+            order_circular = 0.0
+
+        yield_factor = float(np.clip(rng.normal(0.70, 0.10), 0.0, 1.0))
+        if order_primary > 0:
+            pipeline.append({
+                "arrive_round": round_num + lead_time_primary,
+                "units": order_primary,
+                "source": "primary",
+            })
+        if order_circular > 0:
+            pipeline.append({
+                "arrive_round": round_num + CIRCULAR_LEAD_TIME,
+                "units": order_circular * yield_factor,
+                "source": "circular",
+            })
+
+    return cumulative_sap, stockout_rounds
+
+
+def run_monte_carlo(s, S, mix_pct, n_runs=1000):
+    """
+    Run n_runs independent games with the given (s, S, mix_pct) policy.
+    Returns (sap_array, stockout_rounds_array).
+    """
+    saps = np.empty(n_runs)
+    stockouts = np.empty(n_runs, dtype=int)
+    for i in range(n_runs):
+        saps[i], stockouts[i] = run_game_fast(s, S, mix_pct, seed=i)
+    return saps, stockouts
+
+
+def find_optimal_policy(mix_pct, n_runs_per_combo=150):
+    """
+    Grid search over (s, S) to maximise expected SAP for the given mix_pct.
+    Returns (best_s, best_S, best_mean_sap).
+    Grid: s in [20..250 step 25], S in [s+50..450 step 25].
+    """
+    best_s, best_S, best_mean = DEFAULT_S, DEFAULT_S_UPPER, -np.inf
+    for s in range(20, 251, 25):
+        for S in range(s + 50, 451, 25):
+            saps, _ = run_monte_carlo(s, S, mix_pct, n_runs=n_runs_per_combo)
+            mean_sap = float(saps.mean())
+            if mean_sap > best_mean:
+                best_mean = mean_sap
+                best_s = s
+                best_S = S
+    return best_s, best_S, best_mean
+
+
 # ── Analytics ──────────────────────────────────────────────────────────────────
 def compute_switching_point():
     """Carbon price P* at which circular becomes cheaper than primary."""
