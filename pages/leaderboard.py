@@ -191,14 +191,8 @@ else:
                 "Cumulative SAP: $%{y:,.0f}<extra></extra>"
             ),
         ))
-    fig_scatter.update_layout(
-        **PLOT_LAYOUT,
-        title="Lower carbon, higher profit — who got there?",
-        legend=dict(
-            bgcolor="#161b22", bordercolor="#30363d", borderwidth=1,
-            title=dict(text="Grade", font=dict(color="#8b949e")),
-        ),
-    )
+    fig_scatter.update_layout(**PLOT_LAYOUT, title="Lower carbon, higher profit — who got there?")
+    fig_scatter.update_layout(legend_title_text="Grade", legend_title_font_color="#8b949e")
     fig_scatter.update_xaxes(**_AXIS, title="Total Carbon (kg CO₂e)")
     fig_scatter.update_yaxes(**_AXIS, title="Cumulative SAP ($)")
     st.plotly_chart(fig_scatter, width="stretch")

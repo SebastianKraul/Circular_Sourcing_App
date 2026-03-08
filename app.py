@@ -1130,11 +1130,9 @@ if st.session_state["game_over"]:
                 **PLOT_LAYOUT,
                 barmode="overlay",
                 title="SAP Distribution across 1,000 Random Scenarios",
-                xaxis=dict(gridcolor="#21262d", zerolinecolor="#30363d",
-                           title="Cumulative SAP ($)"),
-                yaxis=dict(gridcolor="#21262d", zerolinecolor="#30363d",
-                           title="Probability", tickformat=".0%"),
             )
+            fig_mc.update_xaxes(title="Cumulative SAP ($)")
+            fig_mc.update_yaxes(title="Probability", tickformat=".0%")
             st.plotly_chart(fig_mc, width="stretch")
 
             # Summary stats table
