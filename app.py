@@ -1097,6 +1097,7 @@ if st.session_state["game_over"]:
                     "circular_mix": round(circ_pct, 1),
                     "stockout_rounds": stockout_rounds,
                     "cumulative_sap": round(cumulative_sap, 0),
+                    "total_carbon": round(total_carbon, 0),
                     "game_mode": st.session_state.get("game_mode", "free_play"),
                 }).execute()
                 st.session_state["score_submitted"] = True

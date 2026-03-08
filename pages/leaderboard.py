@@ -165,60 +165,40 @@ display_df["Mode"] = display_df["Mode"].map({
 
 st.dataframe(display_df, hide_index=True, width="stretch")
 
-# ── Score bar chart ────────────────────────────────────────────────────────────
-st.markdown("### Score Distribution")
-fig = go.Figure(go.Bar(
-    x=df["nickname"],
-    y=df["score"],
-    marker_color=[GRADE_COLOR.get(g, "#8b949e") for g in df["grade"]],
-    text=df["grade"],
-    textposition="outside",
-    textfont=dict(color="#c9d1d9", size=13, family="monospace"),
-    hovertemplate="<b>%{x}</b><br>Score: %{y:.1f}<extra></extra>",
-))
-fig.update_layout(**PLOT_LAYOUT, title=f"Scores — Session: {selected}", showlegend=False)
-fig.update_xaxes(**_AXIS, tickangle=-35)
-fig.update_yaxes(**_AXIS, range=[0, 105], title="Score")
-st.plotly_chart(fig, width="stretch")
-
-# ── Circular mix vs SAP scatter ────────────────────────────────────────────────
-if len(df) >= 3:
-    st.markdown("### Circular Mix vs. Cumulative SAP")
-    fig2 = go.Figure(go.Scatter(
-        x=df["circular_mix"],
-        y=df["cumulative_sap"],
-        mode="markers+text",
-        text=df["nickname"],
-        textposition="top center",
-        textfont=dict(size=10, color="#8b949e"),
-        marker=dict(
-            size=14,
-            color=[GRADE_COLOR.get(g, "#8b949e") for g in df["grade"]],
-            line=dict(width=1, color="#30363d"),
+# ── Carbon vs SAP scatter ──────────────────────────────────────────────────────
+st.markdown("### Total Carbon vs. Cumulative SAP")
+carbon_available = "total_carbon" in df.columns and df["total_carbon"].notna().any()
+if not carbon_available:
+    st.info("Carbon data not available for this session — students may need to resubmit.")
+else:
+    fig_scatter = go.Figure()
+    for grade_val, color in GRADE_COLOR.items():
+        subset = df[df["grade"] == grade_val]
+        if subset.empty:
+            continue
+        fig_scatter.add_trace(go.Scatter(
+            x=subset["total_carbon"],
+            y=subset["cumulative_sap"],
+            mode="markers+text",
+            name=f"Grade {grade_val}",
+            text=subset["nickname"],
+            textposition="top center",
+            textfont=dict(size=10, color="#8b949e"),
+            marker=dict(size=14, color=color, line=dict(width=1, color="#30363d")),
+            hovertemplate=(
+                "<b>%{text}</b><br>"
+                "Total Carbon: %{x:,.0f} kg CO₂e<br>"
+                "Cumulative SAP: $%{y:,.0f}<extra></extra>"
+            ),
+        ))
+    fig_scatter.update_layout(
+        **PLOT_LAYOUT,
+        title="Lower carbon, higher profit — who got there?",
+        legend=dict(
+            bgcolor="#161b22", bordercolor="#30363d", borderwidth=1,
+            title=dict(text="Grade", font=dict(color="#8b949e")),
         ),
-        hovertemplate=(
-            "<b>%{text}</b><br>"
-            "Circular Mix: %{x:.1f}%<br>"
-            "SAP: $%{y:,.0f}<extra></extra>"
-        ),
-    ))
-    fig2.update_layout(**PLOT_LAYOUT, title="Does more circular sourcing lead to higher SAP?")
-    fig2.update_xaxes(**_AXIS, tickangle=0, title="Circular Mix (%)", range=[-5, 105])
-    fig2.update_yaxes(**_AXIS, title="Cumulative SAP ($)")
-    st.plotly_chart(fig2, width="stretch")
-
-# ── Grade distribution ─────────────────────────────────────────────────────────
-st.markdown("### Grade Distribution")
-grade_counts = df["grade"].value_counts().reindex(["S", "A", "B", "C", "D"], fill_value=0)
-fig3 = go.Figure(go.Bar(
-    x=grade_counts.index.tolist(),
-    y=grade_counts.values.tolist(),
-    marker_color=[GRADE_COLOR[g] for g in grade_counts.index],
-    text=grade_counts.values.tolist(),
-    textposition="outside",
-    textfont=dict(color="#c9d1d9", size=14),
-))
-fig3.update_layout(**PLOT_LAYOUT, title="Grade Distribution", showlegend=False)
-fig3.update_xaxes(**_AXIS, tickangle=0, title="Grade")
-fig3.update_yaxes(**_AXIS, title="# Students", dtick=1)
-st.plotly_chart(fig3, width="stretch")
+    )
+    fig_scatter.update_xaxes(**_AXIS, title="Total Carbon (kg CO₂e)")
+    fig_scatter.update_yaxes(**_AXIS, title="Cumulative SAP ($)")
+    st.plotly_chart(fig_scatter, width="stretch")
