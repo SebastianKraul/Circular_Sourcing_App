@@ -2172,7 +2172,8 @@ def _show_active_game():
                 annotation_text=f"s={st.session_state['s_reorder_point']}",
                 annotation_font_color="#d29922",
             )
-            fig_inv.update_layout(**PLOT_LAYOUT, title="Inventory", margin=dict(l=40, r=10, t=35, b=30))
+            fig_inv.update_layout(**PLOT_LAYOUT, title="Inventory")
+            fig_inv.update_layout(margin=dict(l=40, r=10, t=35, b=30))
             fig_inv.update_xaxes(title_text="Quarter")
             fig_inv.update_yaxes(title_text="Units")
             st.plotly_chart(fig_inv, width='stretch')
