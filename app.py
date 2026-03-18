@@ -2110,30 +2110,35 @@ def _show_active_game():
         if "{yield_pct}" in body and history:
             last = history[-1]
             if last["order_circular"] > 0:
-                last_yield = last["circular_yield"]
-                received = last["circular_received"]
+                last_yield = float(last["circular_yield"])
+                received = float(last["circular_received"])
                 yield_comment = (
                     "above average" if last_yield > 0.70
                     else ("average" if last_yield > 0.65 else "below average")
                 )
+                fmt_kwargs = dict(yield_pct=last_yield, yield_comment=yield_comment,
+                                  received=received)
                 try:
-                    body = body.format(
-                        yield_pct=float(last_yield), yield_comment=yield_comment,
-                        received=float(received))
+                    body = body.format(**fmt_kwargs)
                 except Exception:
                     body = (
-                        f"EcoReclaim's batch yield came in at **{float(last_yield):.0%}** "
+                        f"EcoReclaim's batch yield came in at **{last_yield:.0%}** "
                         f"this quarter \u2014 {yield_comment}. "
-                        f"You received ~{float(received):.0f} units from circular. "
+                        f"You received ~{received:.0f} units from circular. "
                         "Urban mining yield follows N(70%, \u03c3=10%) \u2014 "
                         "build a yield buffer into your circular order quantity."
                     )
+                # Also format the title if it contains the placeholder (e.g. supplier_failure, known_shock)
+                if "{yield_comment}" in title:
+                    title = title.format(yield_comment=yield_comment)
             else:
                 body = (
                     "No circular orders were placed last quarter, so EcoReclaim's yield data "
                     "is not available. Urban mining yield follows N(70%, \u03c3=10%) \u2014 "
                     "if you order circular units, expect to receive ~70% of the quantity ordered."
                 )
+                if "{yield_comment}" in title:
+                    title = title.replace("{yield_comment}", "Variable")
 
         with st.expander(f"Situation Report \u2014 {title}", expanded=True):
             st.markdown(body)
