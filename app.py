@@ -2118,9 +2118,16 @@ def _show_active_game():
                 )
                 try:
                     body = body.format(
-                        yield_pct=last_yield, yield_comment=yield_comment, received=received)
-                except (KeyError, ValueError):
-                    pass
+                        yield_pct=float(last_yield), yield_comment=yield_comment,
+                        received=float(received))
+                except Exception:
+                    body = (
+                        f"EcoReclaim's batch yield came in at **{float(last_yield):.0%}** "
+                        f"this quarter \u2014 {yield_comment}. "
+                        f"You received ~{float(received):.0f} units from circular. "
+                        "Urban mining yield follows N(70%, \u03c3=10%) \u2014 "
+                        "build a yield buffer into your circular order quantity."
+                    )
             else:
                 body = (
                     "No circular orders were placed last quarter, so EcoReclaim's yield data "
